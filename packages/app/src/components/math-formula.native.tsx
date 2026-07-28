@@ -1,4 +1,5 @@
 import { Text, View } from "react-native";
+import { MarkdownTextSpan } from "./markdown-text";
 
 export interface MathFormulaProps {
   expression: string;
@@ -15,5 +16,5 @@ export function MathFormula({ source, displayMode }: MathFormulaProps) {
     );
   }
 
-  return <Text selectable>{source}</Text>;
+  return <MarkdownTextSpan>{source}</MarkdownTextSpan>;
 }

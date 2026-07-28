@@ -1,4 +1,5 @@
 import type MarkdownIt from "markdown-it";
+import type StateCore from "markdown-it/lib/rules_core/state_core.mjs";
 import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 
@@ -155,14 +156,18 @@ function findInlineMathClosing(
   return null;
 }
 
-function startsLikeCurrency(source: string, contentStart: number): boolean {
-  if (!/\d/.test(source[contentStart])) {
+function startsLikeCurrency(content: string): boolean {
+  const number = /^\d[\d,.]*/.exec(content);
+  if (!number) {
     return false;
   }
 
-  const number = /^\d[\d,.]*/.exec(source.slice(contentStart));
-  const afterNumber = source.slice(contentStart + (number?.[0].length ?? 0)).trimStart();
-  return !/^[+\-*/=^_]/.test(afterNumber);
+  const afterNumber = content.slice(number[0].length);
+  if (afterNumber.length === 0 || /^[A-Za-z\\+\-*/=^_]/.test(afterNumber)) {
+    return false;
+  }
+
+  return !/^[+\-*/=^_\\]/.test(afterNumber.trimStart());
 }
 
 function mathInline(state: StateInline, silent: boolean): boolean {
@@ -177,9 +182,6 @@ function mathInline(state: StateInline, silent: boolean): boolean {
   if (contentStart >= state.posMax || /\s/.test(source[contentStart])) {
     return false;
   }
-  if (delimiter.isSingleDollar && startsLikeCurrency(source, contentStart)) {
-    return false;
-  }
 
   const closingStart = findInlineMathClosing(source, contentStart, delimiter.closing, state.posMax);
   if (closingStart === null) {
@@ -189,6 +191,10 @@ function mathInline(state: StateInline, silent: boolean): boolean {
   const content = source.slice(contentStart, closingStart);
   const crossesLineBoundary = content.includes("\n");
   if (content.length === 0 || crossesLineBoundary || /\s/.test(content[content.length - 1])) {
+    return false;
+  }
+
+  if (delimiter.isSingleDollar && startsLikeCurrency(content)) {
     return false;
   }
 
@@ -207,9 +213,22 @@ function mathInline(state: StateInline, silent: boolean): boolean {
   return true;
 }
 
+function promoteMathFences(state: StateCore): void {
+  for (const token of state.tokens) {
+    const language = token.info.trim().split(/\s+/, 1)[0]?.toLowerCase();
+    if (token.type !== "fence" || language !== "math") {
+      continue;
+    }
+
+    token.type = "math_block";
+    token.tag = "math";
+  }
+}
+
 export function markdownMath(markdown: MarkdownIt): void {
   markdown.block.ruler.before("fence", "math_block", mathBlock, {
     alt: ["paragraph", "reference", "blockquote", "list"],
   });
   markdown.inline.ruler.before("escape", "math_inline", mathInline);
+  markdown.core.ruler.after("block", "math_fence", promoteMathFences);
 }

@@ -71,7 +71,7 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { MathFormula } from "@/components/math-formula";
+import { MathFormula, type MathFormulaProps } from "@/components/math-formula";
 import { markdownMath } from "@/utils/markdown-math";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
@@ -1107,6 +1107,42 @@ function getMarkdownNodeText(node: ASTNode): string {
   return node.children.map(getMarkdownNodeText).join("");
 }
 
+function getMathFormulaProps(node: AssistantMarkdownAstNode): MathFormulaProps {
+  const content = node.content ?? "";
+  const sourceInfo = node.sourceInfo?.trim() ?? "";
+  const fenceLanguage = sourceInfo.split(/\s+/, 1)[0]?.toLowerCase();
+  const isMathFence =
+    node.type === "math_block" &&
+    fenceLanguage === "math" &&
+    (node.markup.startsWith("`") || node.markup.startsWith("~"));
+
+  if (isMathFence) {
+    const terminatedContent = content.endsWith("\n") ? content : `${content}\n`;
+    return {
+      expression: content.trim(),
+      source: `${node.markup}${sourceInfo}\n${terminatedContent}${node.markup}`,
+      displayMode: true,
+    };
+  }
+
+  let closingDelimiter = "$";
+  if (node.markup === "\\(") {
+    closingDelimiter = "\\)";
+  } else if (node.markup === "\\[") {
+    closingDelimiter = "\\]";
+  } else if (node.markup === "$$") {
+    closingDelimiter = "$$";
+  }
+
+  const displayMode = node.type === "math_block" || node.markup === "\\[" || node.markup === "$$";
+  const separator = node.type === "math_block" ? "\n" : "";
+  return {
+    expression: content,
+    source: `${node.markup}${separator}${content}${separator}${closingDelimiter}`,
+    displayMode,
+  };
+}
+
 function nodeHasParentType(parent: unknown, type: string): boolean {
   if (Array.isArray(parent)) {
     return parent.some((entry) => entry?.type === type);
@@ -1725,31 +1761,12 @@ export const AssistantMessage = memo(function AssistantMessage({
           {"\n"}
         </MarkdownTextSpan>
       ),
-      math_inline: (node: ASTNode) => {
-        const isDisplay = node.markup === "\\[" || node.markup === "$$";
-        let closingDelimiter = "$";
-        if (node.markup === "\\(") {
-          closingDelimiter = "\\)";
-        } else if (node.markup === "\\[") {
-          closingDelimiter = "\\]";
-        } else if (node.markup === "$$") {
-          closingDelimiter = "$$";
-        }
-        const source = `${node.markup}${node.content}${closingDelimiter}`;
-        return (
-          <MathFormula
-            key={node.key}
-            expression={node.content}
-            source={source}
-            displayMode={isDisplay}
-          />
-        );
-      },
-      math_block: (node: ASTNode) => {
-        const closingDelimiter = node.markup === "\\[" ? "\\]" : "$$";
-        const source = `${node.markup}\n${node.content}\n${closingDelimiter}`;
-        return <MathFormula key={node.key} expression={node.content} source={source} displayMode />;
-      },
+      math_inline: (node: ASTNode) => (
+        <MathFormula key={node.key} {...getMathFormulaProps(node as AssistantMarkdownAstNode)} />
+      ),
+      math_block: (node: ASTNode) => (
+        <MathFormula key={node.key} {...getMathFormulaProps(node as AssistantMarkdownAstNode)} />
+      ),
       code_block: (
         node: ASTNode,
         _children: ReactNode[],
@@ -1771,29 +1788,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) => {
-        const language = node.sourceInfo?.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? null;
-        if (language === "math") {
-          return (
-            <MathFormula
-              key={node.key}
-              expression={node.content.trim()}
-              source={`\`\`\`math\n${node.content}\`\`\``}
-              displayMode
-            />
-          );
-        }
-
-        return (
-          <HighlightedCodeBlock
-            key={node.key}
-            code={node.content}
-            language={node.sourceInfo}
-            inheritedStyles={inheritedStyles}
-            textStyle={styles.fence}
-          />
-        );
-      },
+      ) => (
+        <HighlightedCodeBlock
+          key={node.key}
+          code={node.content}
+          language={node.sourceInfo}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        />
+      ),
       code_inline: (
         node: ASTNode,
         _children: ReactNode[],

@@ -49,6 +49,36 @@ describe("markdownMath", () => {
     ]);
   });
 
+  it("parses numeric-leading single-dollar formulas without treating prices as math", () => {
+    const tokens = getMathTokens("$2x$ + $42$ + $2\\pi$; prices are $300 or $500.");
+
+    expect(
+      tokens.filter((token) => token.type.startsWith("math_")).map((token) => token.content),
+    ).toEqual(["2x", "42", "2\\pi"]);
+  });
+
+  it("promotes fenced math to a display-math token", () => {
+    const tokens = getMathTokens("```math\nx^2 + y^2 = z^2\n```");
+
+    expect(
+      tokens
+        .filter((token) => token.type.startsWith("math_"))
+        .map((token) => ({
+          type: token.type,
+          content: token.content,
+          markup: token.markup,
+          info: token.info,
+        })),
+    ).toEqual([
+      {
+        type: "math_block",
+        content: "x^2 + y^2 = z^2\n",
+        markup: "```",
+        info: "math",
+      },
+    ]);
+  });
+
   it("leaves currency, escaped delimiters, code, and incomplete formulas literal", () => {
     const tokens = getMathTokens(
       "Costs $300 or $500. Escaped: \\$x$. Code: `$x$`. Incomplete: $x + 1",
