@@ -10,7 +10,8 @@ const DISPLAY_STYLE: CSSProperties = {
 const INLINE_STYLE: CSSProperties = {
   display: "inline-block",
   maxWidth: "100%",
-  verticalAlign: "middle",
+  fontSize: "0.9em",
+  verticalAlign: "baseline",
 };
 
 export interface MathFormulaProps {
@@ -21,8 +22,11 @@ export interface MathFormulaProps {
 
 export function MathFormula({ expression, source, displayMode }: MathFormulaProps) {
   const rendered = useMemo(() => {
+    const compactExpression = displayMode
+      ? expression
+      : expression.replace(/^\\displaystyle\s*/, "");
     try {
-      const html = renderToString(expression, {
+      const html = renderToString(compactExpression, {
         displayMode,
         output: "htmlAndMathml",
         throwOnError: false,

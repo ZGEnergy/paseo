@@ -1134,7 +1134,7 @@ function getMathFormulaProps(node: AssistantMarkdownAstNode): MathFormulaProps {
     closingDelimiter = "$$";
   }
 
-  const displayMode = node.type === "math_block" || node.markup === "\\[" || node.markup === "$$";
+  const displayMode = node.type === "math_block";
   const separator = node.type === "math_block" ? "\n" : "";
   return {
     expression: content,

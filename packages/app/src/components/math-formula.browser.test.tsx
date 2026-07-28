@@ -16,6 +16,21 @@ describe("MathFormula", () => {
     expect(container.querySelector("[aria-label='$E = mc^2$']")).not.toBeNull();
   });
 
+  it("keeps inline fractions compact and structurally rendered", () => {
+    const expression = String.raw`\displaystyle x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`;
+    const { container } = render(
+      <MathFormula expression={expression} source={`$${expression}$`} displayMode={false} />,
+    );
+
+    const formula = container.querySelector<HTMLElement>("[aria-label]");
+    expect(formula?.style.fontSize).toBe("0.9em");
+    expect(formula?.style.verticalAlign).toBe("baseline");
+    expect(container.querySelector("math")?.getAttribute("display")).not.toBe("block");
+    expect(container.querySelector("mfrac")).not.toBeNull();
+    expect(container.querySelector("annotation")?.textContent).not.toContain("\\displaystyle");
+    expect(container.querySelector(".frac-line")).not.toBeNull();
+  });
+
   it("keeps invalid LaTeX visible instead of throwing", () => {
     const { container } = render(
       <MathFormula expression="\\notacommand{" source="\\[\\notacommand{\\]" displayMode />,
