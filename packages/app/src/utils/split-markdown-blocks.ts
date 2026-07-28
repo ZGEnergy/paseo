@@ -7,15 +7,39 @@ interface DisplayMathDelimiter {
   closesOnOpeningLine: boolean;
 }
 
+function stripMarkdownContainerPrefix(line: string): string {
+  let remainder = line;
+  let foundContainer = false;
+
+  while (true) {
+    const blockquote = /^ {0,3}>[ \t]?/.exec(remainder);
+    if (blockquote) {
+      remainder = remainder.slice(blockquote[0].length);
+      foundContainer = true;
+      continue;
+    }
+
+    const listItem = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(remainder);
+    if (listItem) {
+      remainder = remainder.slice(listItem[0].length);
+      foundContainer = true;
+      continue;
+    }
+
+    return foundContainer ? remainder : line;
+  }
+}
+
 function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
-  const match = /^ {0,3}(\$\$|\\\[)/.exec(line);
+  const content = stripMarkdownContainerPrefix(line);
+  const match = /^ {0,3}(\$\$|\\\[)/.exec(content);
   if (!match) {
     return null;
   }
 
   const opening = match[1];
   const closing = opening === "$$" ? "$$" : "\\]";
-  const remainder = line.slice(match[0].length);
+  const remainder = content.slice(match[0].length);
   return {
     closing,
     closesOnOpeningLine: remainder.trimEnd().endsWith(closing),

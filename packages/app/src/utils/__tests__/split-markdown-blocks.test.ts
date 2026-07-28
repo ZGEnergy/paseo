@@ -73,6 +73,25 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("keeps display math nested in a list together across blank lines", () => {
+    expect(
+      splitMarkdownBlocks(
+        "Before\n\n- $$\n  \\begin{aligned}\n  a &= b\n\n  c &= d\n  \\end{aligned}\n  $$\n\nAfter",
+      ),
+    ).toEqual([
+      "Before",
+      "- $$\n  \\begin{aligned}\n  a &= b\n\n  c &= d\n  \\end{aligned}\n  $$",
+      "After",
+    ]);
+  });
+
+  it("keeps streamed display math nested in a blockquote together", () => {
+    expect(splitMarkdownBlocks("Before\n\n> \\[\n> a^2 + b^2\n\n> = c^2")).toEqual([
+      "Before",
+      "> \\[\n> a^2 + b^2\n\n> = c^2",
+    ]);
+  });
+
   it("returns an empty array for empty input", () => {
     expect(splitMarkdownBlocks("")).toEqual([]);
   });
