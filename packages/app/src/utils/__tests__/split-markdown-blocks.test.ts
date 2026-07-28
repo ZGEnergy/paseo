@@ -50,6 +50,29 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("keeps display math with internal blank lines in one block", () => {
+    expect(
+      splitMarkdownBlocks(
+        "Before\n\n$$\n\\begin{aligned}\na &= b\n\nc &= d\n\\end{aligned}\n$$\n\nAfter",
+      ),
+    ).toEqual(["Before", "$$\n\\begin{aligned}\na &= b\n\nc &= d\n\\end{aligned}\n$$", "After"]);
+  });
+
+  it("keeps bracket-delimited display math with internal blank lines in one block", () => {
+    expect(splitMarkdownBlocks("Before\n\n\\[\na^2 + b^2\n\n= c^2\n\\]\n\nAfter")).toEqual([
+      "Before",
+      "\\[\na^2 + b^2\n\n= c^2\n\\]",
+      "After",
+    ]);
+  });
+
+  it("keeps an unclosed streamed display expression together", () => {
+    expect(splitMarkdownBlocks("Before\n\n$$\na^2 + b^2\n\n= c^2")).toEqual([
+      "Before",
+      "$$\na^2 + b^2\n\n= c^2",
+    ]);
+  });
+
   it("returns an empty array for empty input", () => {
     expect(splitMarkdownBlocks("")).toEqual([]);
   });

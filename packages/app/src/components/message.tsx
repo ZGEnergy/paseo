@@ -71,6 +71,8 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MathFormula } from "@/components/math-formula";
+import { markdownMath } from "@/utils/markdown-math";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -1591,7 +1593,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   spacing = "default",
 }: AssistantMessageProps) {
   const markdownParser = useMemo(() => {
-    const parser = MarkdownIt({ typographer: true, linkify: true });
+    const parser = MarkdownIt({ typographer: true, linkify: true }).use(markdownMath);
     const defaultValidateLink = parser.validateLink.bind(parser);
     parser.validateLink = (url: string) => {
       if (url.trim().toLowerCase().startsWith("file://")) {
@@ -1723,6 +1725,31 @@ export const AssistantMessage = memo(function AssistantMessage({
           {"\n"}
         </MarkdownTextSpan>
       ),
+      math_inline: (node: ASTNode) => {
+        const isDisplay = node.markup === "\\[" || node.markup === "$$";
+        let closingDelimiter = "$";
+        if (node.markup === "\\(") {
+          closingDelimiter = "\\)";
+        } else if (node.markup === "\\[") {
+          closingDelimiter = "\\]";
+        } else if (node.markup === "$$") {
+          closingDelimiter = "$$";
+        }
+        const source = `${node.markup}${node.content}${closingDelimiter}`;
+        return (
+          <MathFormula
+            key={node.key}
+            expression={node.content}
+            source={source}
+            displayMode={isDisplay}
+          />
+        );
+      },
+      math_block: (node: ASTNode) => {
+        const closingDelimiter = node.markup === "\\[" ? "\\]" : "$$";
+        const source = `${node.markup}\n${node.content}\n${closingDelimiter}`;
+        return <MathFormula key={node.key} expression={node.content} source={source} displayMode />;
+      },
       code_block: (
         node: ASTNode,
         _children: ReactNode[],
@@ -1744,15 +1771,29 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) => (
-        <HighlightedCodeBlock
-          key={node.key}
-          code={node.content}
-          language={node.sourceInfo}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.fence}
-        />
-      ),
+      ) => {
+        const language = node.sourceInfo?.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? null;
+        if (language === "math") {
+          return (
+            <MathFormula
+              key={node.key}
+              expression={node.content.trim()}
+              source={`\`\`\`math\n${node.content}\`\`\``}
+              displayMode
+            />
+          );
+        }
+
+        return (
+          <HighlightedCodeBlock
+            key={node.key}
+            code={node.content}
+            language={node.sourceInfo}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.fence}
+          />
+        );
+      },
       code_inline: (
         node: ASTNode,
         _children: ReactNode[],

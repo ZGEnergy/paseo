@@ -2,6 +2,25 @@ function getFenceDelimiter(line: string) {
   const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
   return match?.[2] ?? null;
 }
+interface DisplayMathDelimiter {
+  closing: "$$" | "\\]";
+  closesOnOpeningLine: boolean;
+}
+
+function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
+  const match = /^ {0,3}(\$\$|\\\[)/.exec(line);
+  if (!match) {
+    return null;
+  }
+
+  const opening = match[1];
+  const closing = opening === "$$" ? "$$" : "\\]";
+  const remainder = line.slice(match[0].length);
+  return {
+    closing,
+    closesOnOpeningLine: remainder.trimEnd().endsWith(closing),
+  };
+}
 
 export function splitMarkdownBlocks(text: string): string[] {
   if (text.length === 0) {
@@ -12,19 +31,22 @@ export function splitMarkdownBlocks(text: string): string[] {
   let currentLines: string[] = [];
   let activeFenceCharacter: "`" | "~" | null = null;
   let activeFenceLength = 0;
+  let activeDisplayMathClosing: DisplayMathDelimiter["closing"] | null = null;
   let sawBlockSeparator = false;
 
   for (const line of text.split("\n")) {
     const isBlankLine = line.trim().length === 0;
+    const isInsideProtectedBlock =
+      activeFenceCharacter !== null || activeDisplayMathClosing !== null;
 
-    if (!activeFenceCharacter && isBlankLine) {
+    if (!isInsideProtectedBlock && isBlankLine) {
       if (currentLines.length > 0) {
         sawBlockSeparator = true;
       }
       continue;
     }
 
-    if (!activeFenceCharacter && sawBlockSeparator) {
+    if (!isInsideProtectedBlock && sawBlockSeparator) {
       blocks.push(currentLines.join("\n"));
       currentLines = [];
       sawBlockSeparator = false;
@@ -32,20 +54,34 @@ export function splitMarkdownBlocks(text: string): string[] {
 
     currentLines.push(line);
 
-    const fenceDelimiter = getFenceDelimiter(line);
-    if (!fenceDelimiter) {
+    if (activeDisplayMathClosing) {
+      if (line.trimEnd().endsWith(activeDisplayMathClosing)) {
+        activeDisplayMathClosing = null;
+      }
       continue;
     }
 
-    if (!activeFenceCharacter) {
+    const fenceDelimiter = getFenceDelimiter(line);
+    if (activeFenceCharacter) {
+      if (
+        fenceDelimiter?.[0] === activeFenceCharacter &&
+        fenceDelimiter.length >= activeFenceLength
+      ) {
+        activeFenceCharacter = null;
+        activeFenceLength = 0;
+      }
+      continue;
+    }
+
+    if (fenceDelimiter) {
       activeFenceCharacter = fenceDelimiter[0] as "`" | "~";
       activeFenceLength = fenceDelimiter.length;
       continue;
     }
 
-    if (fenceDelimiter[0] === activeFenceCharacter && fenceDelimiter.length >= activeFenceLength) {
-      activeFenceCharacter = null;
-      activeFenceLength = 0;
+    const displayMathDelimiter = getDisplayMathDelimiter(line);
+    if (displayMathDelimiter && !displayMathDelimiter.closesOnOpeningLine) {
+      activeDisplayMathClosing = displayMathDelimiter.closing;
     }
   }
 

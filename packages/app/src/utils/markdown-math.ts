@@ -1,0 +1,215 @@
+import type MarkdownIt from "markdown-it";
+import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
+import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
+
+interface MathDelimiter {
+  opening: "$$" | "\\[";
+  closing: "$$" | "\\]";
+}
+
+const DISPLAY_MATH_DELIMITERS: MathDelimiter[] = [
+  { opening: "$$", closing: "$$" },
+  { opening: "\\[", closing: "\\]" },
+];
+
+function mathBlock(
+  state: StateBlock,
+  startLine: number,
+  endLine: number,
+  silent: boolean,
+): boolean {
+  const start = state.bMarks[startLine] + state.tShift[startLine];
+  const end = state.eMarks[startLine];
+  const openingLine = state.src.slice(start, end);
+  const delimiter = DISPLAY_MATH_DELIMITERS.find(({ opening }) => openingLine.startsWith(opening));
+  if (!delimiter) {
+    return false;
+  }
+
+  const openingRemainder = openingLine.slice(delimiter.opening.length);
+  const closesOnOpeningLine = openingRemainder.trimEnd().endsWith(delimiter.closing);
+  if (closesOnOpeningLine) {
+    const closingStart = openingRemainder.lastIndexOf(delimiter.closing);
+    const content = openingRemainder.slice(0, closingStart).trim();
+    if (content.length === 0) {
+      return false;
+    }
+    if (silent) {
+      return true;
+    }
+
+    const token = state.push("math_block", "math", 0);
+    token.block = true;
+    token.content = content;
+    token.markup = delimiter.opening;
+    token.map = [startLine, startLine + 1];
+    state.line = startLine + 1;
+    return true;
+  }
+
+  const contentLines: string[] = [];
+  if (openingRemainder.length > 0) {
+    contentLines.push(openingRemainder);
+  }
+
+  let closingLine = startLine + 1;
+  for (; closingLine < endLine; closingLine++) {
+    const lineStart = state.bMarks[closingLine] + state.tShift[closingLine];
+    const lineEnd = state.eMarks[closingLine];
+    const line = state.src.slice(lineStart, lineEnd);
+    if (!line.trimEnd().endsWith(delimiter.closing)) {
+      contentLines.push(line);
+      continue;
+    }
+
+    const closingStart = line.lastIndexOf(delimiter.closing);
+    const closingPrefix = line.slice(0, closingStart);
+    if (closingPrefix.length > 0) {
+      contentLines.push(closingPrefix);
+    }
+    break;
+  }
+
+  if (closingLine >= endLine) {
+    return false;
+  }
+
+  const content = contentLines.join("\n").trim();
+  if (content.length === 0) {
+    return false;
+  }
+  if (silent) {
+    return true;
+  }
+
+  const token = state.push("math_block", "math", 0);
+  token.block = true;
+  token.content = content;
+  token.markup = delimiter.opening;
+  token.map = [startLine, closingLine + 1];
+  state.line = closingLine + 1;
+  return true;
+}
+
+function isEscaped(source: string, position: number): boolean {
+  let backslashCount = 0;
+  for (let index = position - 1; index >= 0 && source[index] === "\\"; index--) {
+    backslashCount++;
+  }
+  return backslashCount % 2 === 1;
+}
+interface InlineMathDelimiter {
+  opening: "$" | "$$" | "\\(" | "\\[";
+  closing: "$" | "$$" | "\\)" | "\\]";
+  isSingleDollar: boolean;
+}
+
+const INLINE_MATH_DELIMITERS: InlineMathDelimiter[] = [
+  { opening: "\\(", closing: "\\)", isSingleDollar: false },
+  { opening: "\\[", closing: "\\]", isSingleDollar: false },
+  { opening: "$$", closing: "$$", isSingleDollar: false },
+  { opening: "$", closing: "$", isSingleDollar: true },
+];
+
+function getInlineMathDelimiter(source: string, start: number): InlineMathDelimiter | null {
+  if (isEscaped(source, start)) {
+    return null;
+  }
+
+  for (const delimiter of INLINE_MATH_DELIMITERS) {
+    if (!source.startsWith(delimiter.opening, start)) {
+      continue;
+    }
+
+    const isDollarDelimiter = delimiter.opening.startsWith("$");
+    const followsWordCharacter = /[A-Za-z0-9]/.test(source[start - 1] ?? "");
+    if (isDollarDelimiter && followsWordCharacter) {
+      return null;
+    }
+    if (delimiter.isSingleDollar && source[start + 1] === "$") {
+      continue;
+    }
+    return delimiter;
+  }
+
+  return null;
+}
+
+function findInlineMathClosing(
+  source: string,
+  contentStart: number,
+  closing: InlineMathDelimiter["closing"],
+  maximum: number,
+): number | null {
+  let closingStart = contentStart;
+  while (closingStart < maximum) {
+    closingStart = source.indexOf(closing, closingStart);
+    if (closingStart === -1) {
+      return null;
+    }
+    if (!isEscaped(source, closingStart)) {
+      return closingStart;
+    }
+    closingStart += closing.length;
+  }
+  return null;
+}
+
+function startsLikeCurrency(source: string, contentStart: number): boolean {
+  if (!/\d/.test(source[contentStart])) {
+    return false;
+  }
+
+  const number = /^\d[\d,.]*/.exec(source.slice(contentStart));
+  const afterNumber = source.slice(contentStart + (number?.[0].length ?? 0)).trimStart();
+  return !/^[+\-*/=^_]/.test(afterNumber);
+}
+
+function mathInline(state: StateInline, silent: boolean): boolean {
+  const source = state.src;
+  const start = state.pos;
+  const delimiter = getInlineMathDelimiter(source, start);
+  if (!delimiter) {
+    return false;
+  }
+
+  const contentStart = start + delimiter.opening.length;
+  if (contentStart >= state.posMax || /\s/.test(source[contentStart])) {
+    return false;
+  }
+  if (delimiter.isSingleDollar && startsLikeCurrency(source, contentStart)) {
+    return false;
+  }
+
+  const closingStart = findInlineMathClosing(source, contentStart, delimiter.closing, state.posMax);
+  if (closingStart === null) {
+    return false;
+  }
+
+  const content = source.slice(contentStart, closingStart);
+  const crossesLineBoundary = content.includes("\n");
+  if (content.length === 0 || crossesLineBoundary || /\s/.test(content[content.length - 1])) {
+    return false;
+  }
+
+  const closesBeforeAnotherAmount =
+    delimiter.isSingleDollar && /^\d/.test(content) && /\d/.test(source[closingStart + 1] ?? "");
+  if (closesBeforeAnotherAmount) {
+    return false;
+  }
+
+  if (!silent) {
+    const token = state.push("math_inline", "math", 0);
+    token.content = content;
+    token.markup = delimiter.opening;
+  }
+  state.pos = closingStart + delimiter.closing.length;
+  return true;
+}
+
+export function markdownMath(markdown: MarkdownIt): void {
+  markdown.block.ruler.before("fence", "math_block", mathBlock, {
+    alt: ["paragraph", "reference", "blockquote", "list"],
+  });
+  markdown.inline.ruler.before("escape", "math_inline", mathInline);
+}
