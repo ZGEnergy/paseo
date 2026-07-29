@@ -1,6 +1,7 @@
 import React, { useMemo, type CSSProperties } from "react";
 import { ParseError, renderToString } from "katex";
 import "katex/dist/katex.min.css";
+import type { StyleProp, TextStyle } from "react-native";
 const DISPLAY_STYLE: CSSProperties = {
   display: "block",
   maxWidth: "100%",
@@ -18,6 +19,7 @@ export interface MathFormulaProps {
   expression: string;
   source: string;
   displayMode: boolean;
+  textStyle?: StyleProp<TextStyle>;
 }
 
 export function MathFormula({ expression, source, displayMode }: MathFormulaProps) {

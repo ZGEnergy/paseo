@@ -1598,11 +1598,29 @@ export const AssistantMessage = memo(function AssistantMessage({
           {"\n"}
         </MarkdownTextSpan>
       ),
-      math_inline: (node: ASTNode) => (
-        <MathFormula key={node.key} {...getMathFormulaProps(node as AssistantMarkdownAstNode)} />
+      math_inline: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MathFormula
+          key={node.key}
+          {...getMathFormulaProps(node as AssistantMarkdownAstNode)}
+          textStyle={styles.text}
+        />
       ),
-      math_block: (node: ASTNode) => (
-        <MathFormula key={node.key} {...getMathFormulaProps(node as AssistantMarkdownAstNode)} />
+      math_block: (
+        node: ASTNode,
+        _children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
+        <MathFormula
+          key={node.key}
+          {...getMathFormulaProps(node as AssistantMarkdownAstNode)}
+          textStyle={styles.text}
+        />
       ),
       code_block: (
         node: ASTNode,
