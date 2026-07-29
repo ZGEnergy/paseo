@@ -28,10 +28,14 @@ function mathBlock(
   }
 
   const openingRemainder = openingLine.slice(delimiter.opening.length);
-  const closesOnOpeningLine = openingRemainder.trimEnd().endsWith(delimiter.closing);
-  if (closesOnOpeningLine) {
-    const closingStart = openingRemainder.lastIndexOf(delimiter.closing);
-    const content = openingRemainder.slice(0, closingStart).trim();
+  const sameLineClosingStart = openingRemainder.indexOf(delimiter.closing);
+  if (sameLineClosingStart >= 0) {
+    const trailingContent = openingRemainder.slice(sameLineClosingStart + delimiter.closing.length);
+    if (trailingContent.trim().length > 0) {
+      return false;
+    }
+
+    const content = openingRemainder.slice(0, sameLineClosingStart).trim();
     if (content.length === 0) {
       return false;
     }

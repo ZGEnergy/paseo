@@ -49,6 +49,19 @@ describe("markdownMath", () => {
     ]);
   });
 
+  it("keeps prose between punctuated same-line display formulas", () => {
+    const tokens = getMathTokens("$$x$$.\n\ntext\n\n$$y$$");
+
+    expect(
+      tokens
+        .filter((token) => token.type.startsWith("math_"))
+        .map((token) => ({ type: token.type, content: token.content, markup: token.markup })),
+    ).toEqual([
+      { type: "math_inline", content: "x", markup: "$$" },
+      { type: "math_block", content: "y", markup: "$$" },
+    ]);
+  });
+
   it("parses numeric-leading single-dollar formulas without treating prices as math", () => {
     const tokens = getMathTokens("$2x$ + $42$ + $2\\pi$; prices are $300 or $500.");
 

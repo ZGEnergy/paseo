@@ -66,6 +66,10 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("splits after a punctuated same-line display formula", () => {
+    expect(splitMarkdownBlocks("$$x$$.\n\ntext\n\n$$y$$")).toEqual(["$$x$$.", "text", "$$y$$"]);
+  });
+
   it("keeps an unclosed streamed display expression together", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na^2 + b^2\n\n= c^2")).toEqual([
       "Before",

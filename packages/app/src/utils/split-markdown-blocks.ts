@@ -42,7 +42,7 @@ function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
   const remainder = content.slice(match[0].length);
   return {
     closing,
-    closesOnOpeningLine: remainder.trimEnd().endsWith(closing),
+    closesOnOpeningLine: remainder.includes(closing),
   };
 }
 
