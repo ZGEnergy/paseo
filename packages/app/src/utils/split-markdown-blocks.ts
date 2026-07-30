@@ -79,7 +79,7 @@ export function splitMarkdownBlocks(text: string): string[] {
     currentLines.push(line);
 
     if (activeDisplayMathClosing) {
-      if (line.trimEnd().endsWith(activeDisplayMathClosing)) {
+      if (line.includes(activeDisplayMathClosing)) {
         activeDisplayMathClosing = null;
       }
       continue;

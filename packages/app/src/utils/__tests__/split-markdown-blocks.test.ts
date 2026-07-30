@@ -70,6 +70,15 @@ describe("splitMarkdownBlocks", () => {
     expect(splitMarkdownBlocks("$$x$$.\n\ntext\n\n$$y$$")).toEqual(["$$x$$.", "text", "$$y$$"]);
   });
 
+  it("splits after a multiline display formula with trailing content", () => {
+    expect(splitMarkdownBlocks("$$\nx\n$$.\n\ntext\n\n\\[\ny\n\\] and then\n\nafter")).toEqual([
+      "$$\nx\n$$.",
+      "text",
+      "\\[\ny\n\\] and then",
+      "after",
+    ]);
+  });
+
   it("keeps an unclosed streamed display expression together", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na^2 + b^2\n\n= c^2")).toEqual([
       "Before",
