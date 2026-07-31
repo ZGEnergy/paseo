@@ -79,6 +79,15 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("ignores escaped display delimiters on interior lines", () => {
+    expect(
+      splitMarkdownBlocks("Before\n\n$$\n\\$$ is literal\n\nstill math\n$$.\n\nAfter"),
+    ).toEqual(["Before", "$$\n\\$$ is literal\n\nstill math\n$$.", "After"]);
+    expect(
+      splitMarkdownBlocks("Before\n\n\\[\n\\\\] is literal\n\nstill math\n\\] and then\n\nAfter"),
+    ).toEqual(["Before", "\\[\n\\\\] is literal\n\nstill math\n\\] and then", "After"]);
+  });
+
   it("keeps an unclosed streamed display expression together", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na^2 + b^2\n\n= c^2")).toEqual([
       "Before",

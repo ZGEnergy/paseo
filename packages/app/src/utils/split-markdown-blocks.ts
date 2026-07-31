@@ -30,6 +30,29 @@ function stripMarkdownContainerPrefix(line: string): string {
   }
 }
 
+function containsUnescapedDelimiter(line: string, delimiter: string): boolean {
+  let searchStart = 0;
+
+  while (searchStart < line.length) {
+    const delimiterStart = line.indexOf(delimiter, searchStart);
+    if (delimiterStart === -1) {
+      return false;
+    }
+
+    let precedingBackslashes = 0;
+    for (let index = delimiterStart - 1; index >= 0 && line[index] === "\\"; index -= 1) {
+      precedingBackslashes += 1;
+    }
+    if (precedingBackslashes % 2 === 0) {
+      return true;
+    }
+
+    searchStart = delimiterStart + delimiter.length;
+  }
+
+  return false;
+}
+
 function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
   const content = stripMarkdownContainerPrefix(line);
   const match = /^ {0,3}(\$\$|\\\[)/.exec(content);
@@ -42,7 +65,7 @@ function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
   const remainder = content.slice(match[0].length);
   return {
     closing,
-    closesOnOpeningLine: remainder.includes(closing),
+    closesOnOpeningLine: containsUnescapedDelimiter(remainder, closing),
   };
 }
 
@@ -79,7 +102,7 @@ export function splitMarkdownBlocks(text: string): string[] {
     currentLines.push(line);
 
     if (activeDisplayMathClosing) {
-      if (line.includes(activeDisplayMathClosing)) {
+      if (containsUnescapedDelimiter(line, activeDisplayMathClosing)) {
         activeDisplayMathClosing = null;
       }
       continue;
