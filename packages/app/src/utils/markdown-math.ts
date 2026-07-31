@@ -28,7 +28,7 @@ function mathBlock(
   }
 
   const openingRemainder = openingLine.slice(delimiter.opening.length);
-  const sameLineClosingStart = openingRemainder.indexOf(delimiter.closing);
+  const sameLineClosingStart = findUnescapedDelimiter(openingRemainder, delimiter.closing);
   if (sameLineClosingStart >= 0) {
     const trailingContent = openingRemainder.slice(sameLineClosingStart + delimiter.closing.length);
     if (trailingContent.trim().length > 0) {
@@ -57,21 +57,23 @@ function mathBlock(
     contentLines.push(openingRemainder);
   }
 
+  let trailingContent = "";
   let closingLine = startLine + 1;
   for (; closingLine < endLine; closingLine++) {
     const lineStart = state.bMarks[closingLine] + state.tShift[closingLine];
     const lineEnd = state.eMarks[closingLine];
     const line = state.src.slice(lineStart, lineEnd);
-    if (!line.trimEnd().endsWith(delimiter.closing)) {
+    const closingStart = findUnescapedDelimiter(line, delimiter.closing);
+    if (closingStart === -1) {
       contentLines.push(line);
       continue;
     }
 
-    const closingStart = line.lastIndexOf(delimiter.closing);
     const closingPrefix = line.slice(0, closingStart);
     if (closingPrefix.length > 0) {
       contentLines.push(closingPrefix);
     }
+    trailingContent = line.slice(closingStart + delimiter.closing.length).trimStart();
     break;
   }
 
@@ -92,6 +94,17 @@ function mathBlock(
   token.content = content;
   token.markup = delimiter.opening;
   token.map = [startLine, closingLine + 1];
+  if (trailingContent.length > 0) {
+    const paragraphOpen = state.push("paragraph_open", "p", 1);
+    paragraphOpen.map = [closingLine, closingLine + 1];
+
+    const inline = state.push("inline", "", 0);
+    inline.content = trailingContent;
+    inline.map = [closingLine, closingLine + 1];
+    inline.children = [];
+
+    state.push("paragraph_close", "p", -1);
+  }
   state.line = closingLine + 1;
   return true;
 }
@@ -102,6 +115,23 @@ function isEscaped(source: string, position: number): boolean {
     backslashCount++;
   }
   return backslashCount % 2 === 1;
+}
+
+export function findUnescapedDelimiter(source: string, delimiter: string): number {
+  let searchStart = 0;
+
+  while (searchStart < source.length) {
+    const delimiterStart = source.indexOf(delimiter, searchStart);
+    if (delimiterStart === -1) {
+      return -1;
+    }
+    if (!isEscaped(source, delimiterStart)) {
+      return delimiterStart;
+    }
+    searchStart = delimiterStart + delimiter.length;
+  }
+
+  return -1;
 }
 interface InlineMathDelimiter {
   opening: "$" | "$$" | "\\(" | "\\[";

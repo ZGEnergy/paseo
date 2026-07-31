@@ -62,6 +62,31 @@ describe("markdownMath", () => {
     ]);
   });
 
+  it("parses multiline display formulas with trailing closing-line content", () => {
+    const tokens = getMathTokens("$$\nx\n$$.\n\n\\[\ny\n\\] and then");
+
+    expect(
+      tokens
+        .filter((token) => token.type === "math_block" || token.type === "text")
+        .map((token) => ({ type: token.type, content: token.content })),
+    ).toEqual([
+      { type: "math_block", content: "x" },
+      { type: "text", content: "." },
+      { type: "math_block", content: "y" },
+      { type: "text", content: "and then" },
+    ]);
+  });
+
+  it("ignores escaped display closers inside multiline formulas", () => {
+    const tokens = getMathTokens(
+      "$$\n\\$$ is literal\n\nstill math\n$$\n\n\\[\n\\\\] is literal\n\nstill math\n\\]",
+    );
+
+    expect(
+      tokens.filter((token) => token.type === "math_block").map((token) => token.content),
+    ).toEqual(["\\$$ is literal\n\nstill math", "\\\\] is literal\n\nstill math"]);
+  });
+
   it("parses numeric-leading single-dollar formulas without treating prices as math", () => {
     const tokens = getMathTokens("$2x$ + $42$ + $2\\pi$; prices are $300 or $500.");
 
