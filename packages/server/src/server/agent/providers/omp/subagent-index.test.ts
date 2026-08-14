@@ -162,4 +162,30 @@ describe("OMP provider subagent mapper", () => {
     expect(index.reconcileSnapshots(parent, [])).toEqual([]);
     expect(index.hasRunning(parent)).toBe(true);
   });
+
+  test("links children to their parent task call for deferred card settlement", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+
+    expect(index.hasLinkedChild(parent, "task-1")).toBe(true);
+    expect(index.hasLinkedChild(parent, "task-other")).toBe(false);
+    expect(index.hasRunningLinkedTo(parent, "task-1")).toBe(true);
+
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "completed",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+    expect(index.hasLinkedChild(parent, "task-1")).toBe(true);
+    expect(index.hasRunningLinkedTo(parent, "task-1")).toBe(false);
+  });
 });

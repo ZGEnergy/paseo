@@ -79,6 +79,32 @@ export class OmpSubagentIndex {
     return false;
   }
 
+  hasLinkedChild(parent: object, toolCallId: string): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.toolCallId === toolCallId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hasRunningLinkedTo(parent: object, toolCallId: string): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.toolCallId === toolCallId && state.status === "running") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Merge a successful `get_subagents` reply. That RPC lists only still-running
    * children: an id that previously appeared and is now missing is finished.
