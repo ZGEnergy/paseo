@@ -52,11 +52,6 @@ export async function startAgentRun(
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { outOfBand: true };
   }
-  // Replacement cancels the provider's turn, and for Claude that cancel is the
-  // SDK's stop-everything interrupt: it terminates the session's background
-  // subagents too. An agent that is `running` only because a background
-  // subagent is streaming has nothing worth replacing, so ask the manager
-  // rather than treating every running agent as busy.
   const shouldReplace = Boolean(
     options?.replaceRunning && agentManager.promptRequiresRunReplacement(agentId),
   );

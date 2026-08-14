@@ -836,30 +836,16 @@ export class AgentManager {
     );
   }
 
-  /**
-   * Whether a new prompt has to replace the run in flight.
-   *
-   * `hasInFlightRun` also counts autonomous runs, background provider work such
-   * as a Claude background subagent, which keeps the agent `running` while its
-   * own turn is over. That is the right question for Stop, reload, and rewind,
-   * which do mean to end that work. It is the wrong question for dispatching a
-   * prompt, because replacement cancels the session and takes that background
-   * work with it.
-   *
-   * A foreground turn always has to be replaced. An autonomous run only has to
-   * be when the provider cannot open a foreground turn beside it.
-   */
   promptRequiresRunReplacement(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return false;
     }
-
-    if (agent.activeForegroundTurnId || this.runs.hasForegroundRun(agentId)) {
-      return true;
+    if (!agent.session.acceptsPromptDuringAutonomousTurn) {
+      return this.hasInFlightRun(agentId);
     }
 
-    return this.runs.hasRun(agentId) && !agent.session.acceptsPromptDuringAutonomousTurn;
+    return Boolean(agent.activeForegroundTurnId) || this.runs.hasForegroundRun(agentId);
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -2156,11 +2142,11 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    // An autonomous run does not conflict on a provider that can open a
-    // foreground turn beside its own background work. Where it does conflict,
-    // reject here rather than letting the provider throw from startTurn, which
-    // would fail the turn and drop the autonomous run this agent still has.
-    if (this.promptRequiresRunReplacement(agentId)) {
+    if (
+      existingAgent.activeForegroundTurnId ||
+      this.runs.hasForegroundRun(agentId) ||
+      (this.runs.hasRun(agentId) && !existingAgent.session.acceptsPromptDuringAutonomousTurn)
+    ) {
       this.logger.trace(
         {
           agentId,

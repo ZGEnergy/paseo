@@ -42,10 +42,6 @@ export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
   createPendingRun(agentId: string): PendingForegroundRun {
-    // A foreground turn supersedes background provider work, and one agent holds
-    // one run. Settle the autonomous run on the way out instead of dropping it
-    // from the map: an in-flight cancel awaits its settledPromise and would
-    // otherwise wait for the rescue timeout on a run nothing can terminate.
     const superseded = this.runs.get(agentId);
     if (superseded?.kind === "autonomous") {
       this.clearRun(agentId, superseded);

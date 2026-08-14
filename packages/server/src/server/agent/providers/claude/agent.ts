@@ -2008,8 +2008,6 @@ class ClaudeContextUsageState {
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
-  // startTurn() completes the autonomous turn before pushing the prompt, so a
-  // foreground turn can open while background subagents keep streaming.
   readonly acceptsPromptDuringAutonomousTurn = true;
 
   private readonly config: ClaudeAgentConfig;
