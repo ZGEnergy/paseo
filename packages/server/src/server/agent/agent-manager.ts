@@ -836,6 +836,24 @@ export class AgentManager {
     );
   }
 
+  /**
+   * Whether a foreground turn owns the session right now.
+   *
+   * `hasInFlightRun` also counts autonomous runs — background provider work such
+   * as a Claude background subagent, which keeps the agent `running` while its
+   * own turn is over. That is the right question for Stop, reload, and rewind,
+   * which do mean to end that work. It is the wrong question for dispatching a
+   * prompt: only a foreground turn is something a new prompt has to replace.
+   */
+  hasInFlightForegroundRun(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return false;
+    }
+
+    return Boolean(agent.activeForegroundTurnId) || this.runs.hasForegroundRun(agentId);
+  }
+
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
     const targetAgentId =
       options?.agentId == null ? null : validateAgentId(options.agentId, "subscribe");
@@ -2130,7 +2148,10 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    // Only a foreground turn conflicts. An autonomous run means the provider is
+    // still emitting for background work it owns; a new prompt opens a turn
+    // alongside it rather than being refused.
+    if (existingAgent.activeForegroundTurnId || this.runs.hasForegroundRun(agentId)) {
       this.logger.trace(
         {
           agentId,

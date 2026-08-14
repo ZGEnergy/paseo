@@ -40,7 +40,7 @@ class FakePermissionAgentManager {
     return undefined;
   }
 
-  hasInFlightRun(): boolean {
+  hasInFlightForegroundRun(): boolean {
     return this.hasRunInFlight;
   }
 

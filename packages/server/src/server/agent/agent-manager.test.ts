@@ -5497,6 +5497,77 @@ test("failed replacement cancellation preserves an autonomous running state", as
   }
 });
 
+test("prompting an agent whose only run is autonomous starts a turn without interrupting", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class BackgroundWorkSession extends TestAgentSession {
+    interruptCount = 0;
+    readonly prompts: AgentPromptInput[] = [];
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+    }
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      this.prompts.push(prompt);
+      return { turnId: "foreground-after-background" };
+    }
+  }
+
+  class BackgroundWorkClient extends TestAgentClient {
+    readonly session = new BackgroundWorkSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new BackgroundWorkClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000131",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+
+    // The provider streams for work the session owns in the background — a Claude
+    // background subagent. The agent's own turn is over, but it reads as running.
+    client.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-background-1",
+    });
+    await running;
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: null,
+    });
+
+    await startAgentRun(manager, agent.id, "follow-up while the subagent works", logger, {
+      replaceRunning: true,
+    });
+
+    // Replacing would cancel the session, and for Claude that cancel is the SDK's
+    // stop-everything interrupt: it kills the background subagent this prompt was
+    // most likely asking about.
+    expect(client.session.interruptCount).toBe(0);
+    expect(client.session.prompts).toEqual(["follow-up while the subagent works"]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "foreground-after-background",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("waitForAgentEvent waitForActive resolves for autonomous live-event run", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-wait-"));
   const storagePath = join(workdir, "agents");
