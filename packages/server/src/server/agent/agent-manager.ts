@@ -836,7 +836,7 @@ export class AgentManager {
     );
   }
 
-  promptRequiresRunReplacement(agentId: string): boolean {
+  hasBlockingRun(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return false;
