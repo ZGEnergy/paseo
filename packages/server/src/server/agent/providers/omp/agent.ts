@@ -2158,7 +2158,9 @@ export class OmpAgentSession implements AgentSession {
       try {
         const state = await this.runtimeSession.getState();
         this.state = state;
-        if (!state.isStreaming && !state.isCompacting) {
+        // Parent model idle is not enough: OMP-internal `task` children keep
+        // writing after agent_end / isStreaming=false (#2232).
+        if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
           this.completeTurn(turnId, messages);
           return;
         }
@@ -2167,6 +2169,18 @@ export class OmpAgentSession implements AgentSession {
       }
       await this.providerIdleScheduler.waitForRetry();
     }
+  }
+
+  private async hasRunningOmpSubagents(): Promise<boolean> {
+    try {
+      const snapshots = await this.runtimeSession.getSubagents();
+      for (const event of this.subagentIndex.reconcileSnapshots(this.runtimeSession, snapshots)) {
+        this.emit(event);
+      }
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
+    }
+    return this.subagentIndex.hasRunning(this.runtimeSession);
   }
 
   private async refreshState(): Promise<void> {
