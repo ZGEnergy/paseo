@@ -5502,6 +5502,7 @@ test("prompting an agent whose only run is autonomous starts a turn without inte
   const storage = new AgentStorage(join(workdir, "agents"), logger);
 
   class BackgroundWorkSession extends TestAgentSession {
+    readonly acceptsPromptDuringAutonomousTurn = true;
     interruptCount = 0;
     readonly prompts: AgentPromptInput[] = [];
 
@@ -5562,6 +5563,85 @@ test("prompting an agent whose only run is autonomous starts a turn without inte
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: "foreground-after-background",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prompting during an autonomous turn still replaces it when the provider refuses both", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-refuses-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  // OpenCode's startTurn throws while its runner is active, so the manager has
+  // to cancel the autonomous turn before prompting. Letting the prompt through
+  // would fail the turn and drop the run this agent is still tracking.
+  class ExclusiveTurnSession extends TestAgentSession {
+    interruptCount = 0;
+    autonomousTurnId: string | null = null;
+    readonly prompts: AgentPromptInput[] = [];
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+      const turnId = this.autonomousTurnId;
+      if (!turnId) return;
+      this.autonomousTurnId = null;
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: "codex",
+        turnId,
+        reason: "interrupted",
+      });
+    }
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (this.autonomousTurnId) {
+        throw new Error("A foreground turn is already active");
+      }
+      this.prompts.push(prompt);
+      return { turnId: "foreground-after-cancel" };
+    }
+  }
+
+  class ExclusiveTurnClient extends TestAgentClient {
+    readonly session = new ExclusiveTurnSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new ExclusiveTurnClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+
+    client.session.autonomousTurnId = "autonomous-exclusive-1";
+    client.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-exclusive-1",
+    });
+    await running;
+
+    await startAgentRun(manager, agent.id, "follow-up on an exclusive provider", logger, {
+      replaceRunning: true,
+    });
+
+    expect(client.session.interruptCount).toBe(1);
+    expect(client.session.prompts).toEqual(["follow-up on an exclusive provider"]);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "foreground-after-cancel",
     });
   } finally {
     rmSync(workdir, { recursive: true, force: true });

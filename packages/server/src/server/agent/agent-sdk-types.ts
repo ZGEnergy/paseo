@@ -627,6 +627,16 @@ export interface AgentSession {
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  /**
+   * Whether `startTurn` may open a foreground turn while the session is running
+   * an autonomous turn of its own. Claude does: its background subagents run
+   * beside a foreground turn, and `startTurn` completes the autonomous turn on
+   * the way in. OpenCode does not: `startTurn` throws while its runner is
+   * active, so the manager has to cancel that turn before prompting.
+   *
+   * Defaults to false, which keeps the cancel-then-prompt path.
+   */
+  readonly acceptsPromptDuringAutonomousTurn?: boolean;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;

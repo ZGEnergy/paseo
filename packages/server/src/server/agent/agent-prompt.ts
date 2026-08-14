@@ -14,7 +14,11 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "tryRunOutOfBand" | "hasInFlightForegroundRun" | "replaceAgentRun" | "streamAgent"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "promptRequiresRunReplacement"
+  | "replaceAgentRun"
+  | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
@@ -50,11 +54,11 @@ export async function startAgentRun(
   }
   // Replacement cancels the provider's turn, and for Claude that cancel is the
   // SDK's stop-everything interrupt: it terminates the session's background
-  // subagents too. Only replace when a foreground turn actually holds the
-  // session — an agent that is `running` purely because a background subagent
-  // is streaming has nothing to replace.
+  // subagents too. An agent that is `running` only because a background
+  // subagent is streaming has nothing worth replacing, so ask the manager
+  // rather than treating every running agent as busy.
   const shouldReplace = Boolean(
-    options?.replaceRunning && agentManager.hasInFlightForegroundRun(agentId),
+    options?.replaceRunning && agentManager.promptRequiresRunReplacement(agentId),
   );
   const runOptions = options?.runOptions;
   const iterator = shouldReplace

@@ -40,7 +40,7 @@ class FakePermissionAgentManager {
     return undefined;
   }
 
-  hasInFlightForegroundRun(): boolean {
+  promptRequiresRunReplacement(): boolean {
     return this.hasRunInFlight;
   }
 

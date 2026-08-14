@@ -837,21 +837,29 @@ export class AgentManager {
   }
 
   /**
-   * Whether a foreground turn owns the session right now.
+   * Whether a new prompt has to replace the run in flight.
    *
-   * `hasInFlightRun` also counts autonomous runs — background provider work such
+   * `hasInFlightRun` also counts autonomous runs, background provider work such
    * as a Claude background subagent, which keeps the agent `running` while its
    * own turn is over. That is the right question for Stop, reload, and rewind,
    * which do mean to end that work. It is the wrong question for dispatching a
-   * prompt: only a foreground turn is something a new prompt has to replace.
+   * prompt, because replacement cancels the session and takes that background
+   * work with it.
+   *
+   * A foreground turn always has to be replaced. An autonomous run only has to
+   * be when the provider cannot open a foreground turn beside it.
    */
-  hasInFlightForegroundRun(agentId: string): boolean {
+  promptRequiresRunReplacement(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {
       return false;
     }
 
-    return Boolean(agent.activeForegroundTurnId) || this.runs.hasForegroundRun(agentId);
+    if (agent.activeForegroundTurnId || this.runs.hasForegroundRun(agentId)) {
+      return true;
+    }
+
+    return this.runs.hasRun(agentId) && !agent.session.acceptsPromptDuringAutonomousTurn;
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -2148,10 +2156,11 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    // Only a foreground turn conflicts. An autonomous run means the provider is
-    // still emitting for background work it owns; a new prompt opens a turn
-    // alongside it rather than being refused.
-    if (existingAgent.activeForegroundTurnId || this.runs.hasForegroundRun(agentId)) {
+    // An autonomous run does not conflict on a provider that can open a
+    // foreground turn beside its own background work. Where it does conflict,
+    // reject here rather than letting the provider throw from startTurn, which
+    // would fail the turn and drop the autonomous run this agent still has.
+    if (this.promptRequiresRunReplacement(agentId)) {
       this.logger.trace(
         {
           agentId,
