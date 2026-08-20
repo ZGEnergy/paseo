@@ -147,7 +147,8 @@ jobs:
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
 
-      - name: Build desktop release
+      - name: Build desktop release with Apple signing and notarization
+        if: ${{ github.repository == 'ZGEnergy/paseo' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -164,6 +165,23 @@ jobs:
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          npm run build:desktop "${build_args[@]}"
+
+      - name: Build desktop release without Apple signing or notarization
+        if: ${{ github.repository != 'ZGEnergy/paseo' }}
+        shell: bash
+        env:
+          EP_GH_IGNORE_TIME: true
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
+        run: |
+          set -euo pipefail
+          build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
+          build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+          build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.mac.notarize=false")
+          build_args+=("-c.mac.identity=null")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics

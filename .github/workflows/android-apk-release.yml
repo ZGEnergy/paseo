@@ -76,12 +76,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Expo and EAS
+        if: ${{ github.repository == 'ZGEnergy/paseo' }}
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build Android APK on EAS
+        if: ${{ github.repository == 'ZGEnergy/paseo' }}
         id: eas_build
         shell: bash
         run: |
@@ -101,6 +103,7 @@ jobs:
           echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
 
       - name: Resolve APK artifact URL
+        if: ${{ github.repository == 'ZGEnergy/paseo' }}
         id: artifact
         shell: bash
         run: |
@@ -126,6 +129,7 @@ jobs:
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK to GitHub Release
+        if: ${{ github.repository == 'ZGEnergy/paseo' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

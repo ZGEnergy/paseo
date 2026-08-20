@@ -106,14 +106,71 @@ jobs:
           process.stdout.write(evidence.mode);
           NODE
           )"
-          if [ "$mode" = "reconciled" ]; then
-            decision="$(gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json reviewDecision --jq .reviewDecision)"
-            if [ "$decision" != "APPROVED" ]; then
-              echo "Reconciled import remains open until one human approval is recorded."
-              exit 0
-            fi
-          elif [ "$mode" != "direct" ]; then
+          if [ "$mode" != "direct" ] && [ "$mode" != "reconciled" ]; then
             echo "::error::Unknown upstream import mode: $mode"
             exit 1
           fi
-          gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false
+
+          owner="${REPOSITORY%%/*}"
+          name="${REPOSITORY#*/}"
+          gh api graphql --paginate --slurp \
+            -F owner="$owner" \
+            -F name="$name" \
+            -F number="$PULL_REQUEST" \
+            -f query='
+              query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    headRefOid
+                    latestReviews(first: 100, after: $endCursor) {
+                      nodes {
+                        author {
+                          __typename
+                          ... on User { login }
+                        }
+                        state
+                        commit { oid }
+                      }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }
+            ' > "$RUNNER_TEMP/pull-request-reviews.json"
+
+          approved_head="$(node --input-type=module - "$RUNNER_TEMP/pull-request-reviews.json" "$mode" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const pages = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const mode = process.argv[3];
+          if (!Array.isArray(pages) || pages.length === 0) {
+            throw new Error("GraphQL review query returned no pages");
+          }
+          const pullRequests = pages.map((page) => page?.data?.repository?.pullRequest);
+          if (pullRequests.some((pullRequest) => !pullRequest)) {
+            throw new Error("GraphQL review query returned no pull request");
+          }
+          const headRefOids = new Set(pullRequests.map((pullRequest) => pullRequest.headRefOid));
+          if (headRefOids.size !== 1 || [...headRefOids][0] === null) {
+            throw new Error("Pull request head changed while reviews were paged");
+          }
+          const headRefOid = [...headRefOids][0];
+          const hasCurrentHeadHumanApproval = pullRequests.some((pullRequest) =>
+            pullRequest.latestReviews.nodes.some((review) =>
+              review.state === "APPROVED" &&
+              review.author?.__typename === "User" &&
+              review.commit?.oid === headRefOid
+            )
+          );
+          if (mode === "reconciled" && !hasCurrentHeadHumanApproval) {
+            process.stdout.write("NO_APPROVAL");
+          } else {
+            process.stdout.write(headRefOid);
+          }
+          NODE
+          )"
+          if [ "$mode" = "reconciled" ] && [ "$approved_head" = "NO_APPROVAL" ]; then
+            echo "Reconciled import remains open until one human approval is recorded for the current pull request head."
+            exit 0
+          fi
+          echo "head_oid=$approved_head" >> "$GITHUB_OUTPUT"
+          gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false --match-head-commit "$approved_head"
