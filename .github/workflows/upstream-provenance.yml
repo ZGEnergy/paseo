@@ -1,0 +1,47 @@
+name: Upstream provenance
+
+on:
+  pull_request_target:
+    branches: [internal/main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to reconcile
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  reconcile:
+    # main -> internal/main is created by the sync workflow and has no upstream
+    # feature metadata; its CI and required human review provide the gate.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.base.repo.full_name != github.repository || github.event.pull_request.base.ref != 'internal/main' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.head.ref != 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/check-upstream-provenance.mjs
+
+      - name: Verify upstream provenance and patch equivalence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.pull_request || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          node scripts/check-upstream-provenance.mjs \
+            --repository "$REPOSITORY" \
+            --pull-request "$PULL_REQUEST" \
+            --evidence reconciliation-evidence.json
+
+      - name: Upload reconciliation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-reconciliation-${{ github.event.pull_request.number || inputs.pull_request }}
+          path: reconciliation-evidence.json
+          if-no-files-found: error
+          retention-days: 14
