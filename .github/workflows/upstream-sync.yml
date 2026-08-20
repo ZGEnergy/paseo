@@ -64,19 +64,19 @@ jobs:
           if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
             title="Upstream sync blocked: fork main diverged"
             body="$(cat <<EOF
-<!-- upstream-sync-divergence -->
-## Upstream sync blocked
+          <!-- upstream-sync-divergence -->
+          ## Upstream sync blocked
 
-Fork \`main\` is not an ancestor of upstream \`main\`, so the mirror was not changed.
+          Fork \`main\` is not an ancestor of upstream \`main\`, so the mirror was not changed.
 
-- Fork \`main\` SHA: $fork_sha
-- Upstream \`main\` SHA: $upstream_sha
+          - Fork \`main\` SHA: $fork_sha
+          - Upstream \`main\` SHA: $upstream_sha
 
-## Recovery
+          ## Recovery
 
-Have a maintainer inspect the divergence, remove fork-only commits from \`main\`, and restore it as an exact upstream mirror. Re-run **Upstream sync** only after \`main\` is an ancestor of upstream \`main\`; import fork-only work through \`internal/main\` instead.
-EOF
-)"
+          Have a maintainer inspect the divergence, remove fork-only commits from \`main\`, and restore it as an exact upstream mirror. Re-run **Upstream sync** only after \`main\` is an ancestor of upstream \`main\`; import fork-only work through \`internal/main\` instead.
+          EOF
+          )"
             number="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')"
             if [ -n "$number" ]; then
               gh issue edit "$number" --title "$title" --body "$body"

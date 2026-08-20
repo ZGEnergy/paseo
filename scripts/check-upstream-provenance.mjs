@@ -23,7 +23,9 @@ function ghApi(path, accept = "application/vnd.github+json") {
     });
   } catch (error) {
     const detail = error.stderr?.toString().trim();
-    throw new Error(`GitHub API request failed for ${path}${detail ? `: ${detail}` : ""}`);
+    throw new Error(`GitHub API request failed for ${path}${detail ? `: ${detail}` : ""}`, {
+      cause: error,
+    });
   }
 }
 
@@ -48,7 +50,9 @@ function provenanceMetadata(body) {
   const hasForkMain = forkMain !== undefined;
   const hasReconciliationMerge = reconciliationMerge !== undefined;
   if (hasForkMain !== hasReconciliationMerge) {
-    throw new Error("Pull request body must include both Fork main: and Reconciliation merge: for reconciled imports");
+    throw new Error(
+      "Pull request body must include both Fork main: and Reconciliation merge: for reconciled imports",
+    );
   }
   return {
     mode: hasForkMain ? "reconciled" : "direct",
@@ -73,7 +77,11 @@ function repositoryFrom(value, label) {
     const segments = url.pathname.split("/").filter(Boolean);
     if (url.hostname.toLowerCase() === "github.com" && segments.length === 2) {
       repository = segments.join("/");
-    } else if (url.hostname.toLowerCase() === "api.github.com" && segments.length === 3 && segments[0] === "repos") {
+    } else if (
+      url.hostname.toLowerCase() === "api.github.com" &&
+      segments.length === 3 &&
+      segments[0] === "repos"
+    ) {
       repository = segments.slice(1).join("/");
     } else {
       throw new Error(`${label} must identify a GitHub repository`);
@@ -105,7 +113,14 @@ function referenceFrom(value, label, kind, upstreamRepository) {
   } catch {
     throw new Error(`${label} must be an upstream ${kind} number or GitHub URL`);
   }
-  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "github.com" || url.username || url.password || url.search || url.hash) {
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "github.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
     throw new Error(`${label} must refer to ${upstreamRepository}`);
   }
   const segments = url.pathname.split("/").filter(Boolean);
@@ -177,7 +192,10 @@ try {
   if (!Number.isSafeInteger(currentPullRequest) || currentPullRequest < 1) {
     throw new Error("Pull request must be a positive number");
   }
-  const upstreamRepository = repositoryFrom(option("upstream-repository", "getpaseo/paseo"), "Upstream repository");
+  const upstreamRepository = repositoryFrom(
+    option("upstream-repository", "getpaseo/paseo"),
+    "Upstream repository",
+  );
   const evidencePath = option("evidence", "reconciliation-evidence.json");
   const current = ghJson(`repos/${repository}/pulls/${currentPullRequest}`);
   if (current.base.ref !== "internal/main") {
@@ -188,9 +206,22 @@ try {
   }
 
   const body = current.body ?? "";
-  const upstreamIssue = referenceFrom(metadata(body, "Upstream issue"), "Upstream issue", "issues", upstreamRepository);
-  const upstreamPullRequest = referenceFrom(metadata(body, "Upstream pull request"), "Upstream pull request", "pull", upstreamRepository);
-  const upstreamHeadRepository = repositoryFrom(metadata(body, "Upstream head repository"), "Upstream head repository");
+  const upstreamIssue = referenceFrom(
+    metadata(body, "Upstream issue"),
+    "Upstream issue",
+    "issues",
+    upstreamRepository,
+  );
+  const upstreamPullRequest = referenceFrom(
+    metadata(body, "Upstream pull request"),
+    "Upstream pull request",
+    "pull",
+    upstreamRepository,
+  );
+  const upstreamHeadRepository = repositoryFrom(
+    metadata(body, "Upstream head repository"),
+    "Upstream head repository",
+  );
   const upstreamHead = shaFrom(metadata(body, "Upstream head"));
   const reconciliation = provenanceMetadata(body);
   const issue = ghJson(`repos/${upstreamRepository}/issues/${upstreamIssue}`);
@@ -198,26 +229,52 @@ try {
   if (issue.pull_request !== undefined) {
     throw new Error("Upstream issue reference resolves to a pull request");
   }
-  if (repositoryFrom(issue.repository_url ?? "", "API upstream issue repository") !== upstreamRepository) {
+  if (
+    repositoryFrom(issue.repository_url ?? "", "API upstream issue repository") !==
+    upstreamRepository
+  ) {
     throw new Error("Upstream issue belongs to a different repository");
   }
-  if (repositoryFrom(upstream.base?.repo?.full_name ?? "", "Upstream pull request base repository") !== upstreamRepository) {
+  if (
+    repositoryFrom(
+      upstream.base?.repo?.full_name ?? "",
+      "Upstream pull request base repository",
+    ) !== upstreamRepository
+  ) {
     throw new Error(`Upstream pull request must merge into ${upstreamRepository}`);
   }
   const actualHeadRepository = upstream.head.repo?.full_name;
-  if (!actualHeadRepository || repositoryFrom(actualHeadRepository, "API upstream head repository") !== upstreamHeadRepository) {
-    throw new Error(`Upstream head repository mismatch: metadata ${upstreamHeadRepository}, API ${actualHeadRepository ?? "missing"}`);
+  if (
+    !actualHeadRepository ||
+    repositoryFrom(actualHeadRepository, "API upstream head repository") !== upstreamHeadRepository
+  ) {
+    throw new Error(
+      `Upstream head repository mismatch: metadata ${upstreamHeadRepository}, API ${actualHeadRepository ?? "missing"}`,
+    );
   }
   if (upstream.head.sha.toLowerCase() !== upstreamHead) {
     throw new Error(`Upstream head mismatch: metadata ${upstreamHead}, API ${upstream.head.sha}`);
   }
 
   if (reconciliation.mode === "direct") {
-    const forkPatchIds = patchIds(ghApi(`repos/${repository}/pulls/${currentPullRequest}`, "application/vnd.github.patch"), "Fork pull request");
-    const upstreamPatchIds = patchIds(ghApi(`repos/${upstreamRepository}/pulls/${upstreamPullRequest}`, "application/vnd.github.patch"), "Upstream pull request");
-    const patchesEquivalent = forkPatchIds.length === upstreamPatchIds.length && forkPatchIds.every((id, index) => id === upstreamPatchIds[index]);
+    const forkPatchIds = patchIds(
+      ghApi(`repos/${repository}/pulls/${currentPullRequest}`, "application/vnd.github.patch"),
+      "Fork pull request",
+    );
+    const upstreamPatchIds = patchIds(
+      ghApi(
+        `repos/${upstreamRepository}/pulls/${upstreamPullRequest}`,
+        "application/vnd.github.patch",
+      ),
+      "Upstream pull request",
+    );
+    const patchesEquivalent =
+      forkPatchIds.length === upstreamPatchIds.length &&
+      forkPatchIds.every((id, index) => id === upstreamPatchIds[index]);
     if (!patchesEquivalent) {
-      throw new Error(`Patch equivalence failed: fork [${forkPatchIds.join(", ")}], upstream [${upstreamPatchIds.join(", ")}]`);
+      throw new Error(
+        `Patch equivalence failed: fork [${forkPatchIds.join(", ")}], upstream [${upstreamPatchIds.join(", ")}]`,
+      );
     }
 
     writeEvidence(evidencePath, {
@@ -238,7 +295,9 @@ try {
     const reconciliationMerge = shaFrom(reconciliation.reconciliationMerge, "Reconciliation merge");
     const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
     if (currentHead !== reconciliationMerge) {
-      throw new Error(`Reconciliation merge mismatch: metadata ${reconciliationMerge}, pull request head ${currentHead}`);
+      throw new Error(
+        `Reconciliation merge mismatch: metadata ${reconciliationMerge}, pull request head ${currentHead}`,
+      );
     }
 
     const liveMain = ghJson(`repos/${repository}/git/ref/heads/main`);
@@ -248,12 +307,20 @@ try {
     }
 
     const mergeCommit = ghJson(`repos/${repository}/commits/${reconciliationMerge}`);
-    const mergeParents = Array.isArray(mergeCommit.parents) ? mergeCommit.parents.map((parent) => shaFrom(parent?.sha ?? "", "Reconciliation merge parent")) : [];
+    const mergeParents = Array.isArray(mergeCommit.parents)
+      ? mergeCommit.parents.map((parent) =>
+          shaFrom(parent?.sha ?? "", "Reconciliation merge parent"),
+        )
+      : [];
     if (mergeParents.length !== 2) {
-      throw new Error(`Reconciliation merge must have exactly two parents (found ${mergeParents.length})`);
+      throw new Error(
+        `Reconciliation merge must have exactly two parents (found ${mergeParents.length})`,
+      );
     }
     if (mergeParents[0] !== upstreamHead || mergeParents[1] !== forkMain) {
-      throw new Error(`Reconciliation merge parents must be [${upstreamHead}, ${forkMain}] (found [${mergeParents.join(", ")}])`);
+      throw new Error(
+        `Reconciliation merge parents must be [${upstreamHead}, ${forkMain}] (found [${mergeParents.join(", ")}])`,
+      );
     }
 
     const reviewDiffReference = current.html_url
@@ -275,7 +342,9 @@ try {
       result: "equivalent",
     });
   }
-  console.log(`Upstream provenance verified: ${upstreamRepository}#${upstreamPullRequest} == ${repository}#${currentPullRequest}`);
+  console.log(
+    `Upstream provenance verified: ${upstreamRepository}#${upstreamPullRequest} == ${repository}#${currentPullRequest}`,
+  );
 } catch (error) {
   console.error(`::error::${error.message}`);
   process.exitCode = 1;

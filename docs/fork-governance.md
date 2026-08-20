@@ -24,4 +24,3 @@ Required checks are the repository CI workflow and the provenance check for chan
 ## Release and relay isolation
 
 This fork must not publish to upstream release destinations. Release workflows may create artifacts only in this repository and require repository-owner or credential guards before any external publish. A workflow-file guard alone cannot prevent relay deployment across a public fork network: each repository owner must disable the inherited relay workflow in repository Actions settings and remove any relay deployment credentials/secrets (or otherwise revoke the deployment environment) at the repository level. The relay implementation and its default endpoint remain unchanged.
-
