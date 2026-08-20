@@ -13,6 +13,7 @@ const AGENT_DEFAULTS: Agent = {
   id: "agent",
   provider: "codex",
   status: "idle",
+  activeTurn: null,
   createdAt: AGENT_TIMESTAMP,
   updatedAt: AGENT_TIMESTAMP,
   lastUserMessageAt: null,
@@ -115,7 +116,7 @@ describe("selectSubagentsForParent", () => {
         toolCallId: "call-1",
       },
     });
-    store.hideFinishedForParent(SERVER_ID, "parent-a");
+    store.hideFromTrack(SERVER_ID, "parent-a", ["provider-child"]);
 
     expect(
       selectProviderSubagentsForParent(

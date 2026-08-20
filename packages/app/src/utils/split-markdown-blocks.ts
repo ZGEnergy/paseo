@@ -1,4 +1,7 @@
+import MarkdownIt from "markdown-it";
 import { findUnescapedDelimiter } from "./markdown-math";
+
+const markdownBlockParser = new MarkdownIt();
 
 function getFenceDelimiter(line: string) {
   const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
@@ -48,6 +51,44 @@ function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
   };
 }
 
+interface ProtectedBlockState {
+  fenceCharacter: "`" | "~" | null;
+  fenceLength: number;
+  displayMathClosing: DisplayMathDelimiter["closing"] | null;
+}
+
+function updateProtectedBlockState(line: string, state: ProtectedBlockState): void {
+  if (state.displayMathClosing) {
+    if (findUnescapedDelimiter(line, state.displayMathClosing) !== -1) {
+      state.displayMathClosing = null;
+    }
+    return;
+  }
+
+  const fenceDelimiter = getFenceDelimiter(line);
+  if (state.fenceCharacter) {
+    if (
+      fenceDelimiter?.[0] === state.fenceCharacter &&
+      fenceDelimiter.length >= state.fenceLength
+    ) {
+      state.fenceCharacter = null;
+      state.fenceLength = 0;
+    }
+    return;
+  }
+
+  if (fenceDelimiter) {
+    state.fenceCharacter = fenceDelimiter[0] as "`" | "~";
+    state.fenceLength = fenceDelimiter.length;
+    return;
+  }
+
+  const displayMathDelimiter = getDisplayMathDelimiter(line);
+  if (displayMathDelimiter && !displayMathDelimiter.closesOnOpeningLine) {
+    state.displayMathClosing = displayMathDelimiter.closing;
+  }
+}
+
 export function splitMarkdownBlocks(text: string): string[] {
   if (text.length === 0) {
     return [];
@@ -55,17 +96,27 @@ export function splitMarkdownBlocks(text: string): string[] {
 
   const blocks: string[] = [];
   let currentLines: string[] = [];
-  let activeFenceCharacter: "`" | "~" | null = null;
-  let activeFenceLength = 0;
-  let activeDisplayMathClosing: DisplayMathDelimiter["closing"] | null = null;
+  const protectedBlockState: ProtectedBlockState = {
+    fenceCharacter: null,
+    fenceLength: 0,
+    displayMathClosing: null,
+  };
   let sawBlockSeparator = false;
+  const lines = text.split("\n");
+  const structuralBlankLines = getStructuralBlankLines(text, lines);
 
-  for (const line of text.split("\n")) {
+  for (const [index, line] of lines.entries()) {
     const isBlankLine = line.trim().length === 0;
     const isInsideProtectedBlock =
-      activeFenceCharacter !== null || activeDisplayMathClosing !== null;
+      protectedBlockState.fenceCharacter !== null ||
+      protectedBlockState.displayMathClosing !== null;
 
-    if (!isInsideProtectedBlock && isBlankLine) {
+    if (isBlankLine && (isInsideProtectedBlock || structuralBlankLines.has(index))) {
+      currentLines.push(line);
+      continue;
+    }
+
+    if (isBlankLine) {
       if (currentLines.length > 0) {
         sawBlockSeparator = true;
       }
@@ -79,36 +130,7 @@ export function splitMarkdownBlocks(text: string): string[] {
     }
 
     currentLines.push(line);
-
-    if (activeDisplayMathClosing) {
-      if (findUnescapedDelimiter(line, activeDisplayMathClosing) !== -1) {
-        activeDisplayMathClosing = null;
-      }
-      continue;
-    }
-
-    const fenceDelimiter = getFenceDelimiter(line);
-    if (activeFenceCharacter) {
-      if (
-        fenceDelimiter?.[0] === activeFenceCharacter &&
-        fenceDelimiter.length >= activeFenceLength
-      ) {
-        activeFenceCharacter = null;
-        activeFenceLength = 0;
-      }
-      continue;
-    }
-
-    if (fenceDelimiter) {
-      activeFenceCharacter = fenceDelimiter[0] as "`" | "~";
-      activeFenceLength = fenceDelimiter.length;
-      continue;
-    }
-
-    const displayMathDelimiter = getDisplayMathDelimiter(line);
-    if (displayMathDelimiter && !displayMathDelimiter.closesOnOpeningLine) {
-      activeDisplayMathClosing = displayMathDelimiter.closing;
-    }
+    updateProtectedBlockState(line, protectedBlockState);
   }
 
   if (currentLines.length > 0) {
@@ -116,4 +138,20 @@ export function splitMarkdownBlocks(text: string): string[] {
   }
 
   return blocks.filter((block) => block.length > 0);
+}
+
+function getStructuralBlankLines(text: string, lines: string[]): Set<number> {
+  const blankLines = new Set<number>();
+  for (const token of markdownBlockParser.parse(text, {})) {
+    if (token.level !== 0 || !token.map) {
+      continue;
+    }
+    const [start, end] = token.map;
+    for (let index = start; index < end - 1; index += 1) {
+      if (lines[index]?.trim().length === 0) {
+        blankLines.add(index);
+      }
+    }
+  }
+  return blankLines;
 }

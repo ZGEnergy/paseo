@@ -495,6 +495,7 @@ export const SETTINGS_SECTION_SLUGS = [
   "editor",
   "shortcuts",
   "integrations",
+  "notifications",
   "permissions",
   "diagnostics",
   "about",
@@ -509,11 +510,14 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
 export const HOST_SECTION_SLUGS = [
   "projects",
   "connections",
+  "pair-device",
   "agents",
+  "metadata",
   "workspaces",
   "providers",
   "usage",
   "terminals",
+  "plugins",
   "host",
 ] as const;
 

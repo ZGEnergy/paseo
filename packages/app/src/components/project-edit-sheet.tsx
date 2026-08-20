@@ -40,7 +40,6 @@ export interface ProjectEditSheetProps {
 export function ProjectEditSheet({
   visible,
   onClose,
-  serverId,
   projectId,
   projectViewKey,
   client,
@@ -60,7 +59,6 @@ export function ProjectEditSheet({
       submitProjectEdit({ client, projectId, submission }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["projectIcon", serverId] });
       toast.show(t("settings.project.edit.savedToast"), { variant: "success" });
       onClose();
     },
@@ -162,8 +160,7 @@ export function ProjectEditSheet({
                 iconDataUri={state.previewDataUri}
                 initial={projectInitial(snapshot.projectName)}
                 projectViewKey={projectViewKey}
-                imageStyle={styles.preview}
-                fallbackStyle={styles.previewFallback}
+                size={40}
                 textStyle={styles.previewText}
               />
               <Button
@@ -272,18 +269,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     flexWrap: "wrap",
     gap: theme.spacing[2],
-  },
-  preview: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.md,
-  },
-  previewFallback: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
   },
   previewText: {
     fontSize: theme.fontSize.base,
