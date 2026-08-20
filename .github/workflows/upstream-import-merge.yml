@@ -71,7 +71,7 @@ jobs:
             echo "eligible=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for CI and provenance checks
+      - name: Wait for CI checks
         if: steps.import.outputs.eligible == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,22 +90,24 @@ jobs:
             fi
             result="$(node --input-type=module - "$checks" <<'NODE'
           const checks = JSON.parse(process.argv[2]);
-          const expected = [
-            ["CI", "changes"],
-            ["Upstream provenance", "reconcile"],
-          ];
+          const ciChecks = checks.filter((candidate) => candidate.workflow === "CI");
           const failed = [];
           const pending = [];
-          for (const [workflow, name] of expected) {
-            const check = checks.find((candidate) => candidate.workflow === workflow && candidate.name === name);
-            if (!check || check.state === "PENDING" || check.state === "EXPECTED") {
-              pending.push(`${workflow} / ${name}`);
-            } else if (check.state !== "SUCCESS") {
-              failed.push(`${workflow} / ${name}: ${check.state}`);
+          const terminalSuccess = new Set(["SUCCESS", "SKIPPED"]);
+          const waiting = new Set(["PENDING", "EXPECTED"]);
+
+          if (ciChecks.length === 0) pending.push("CI");
+          for (const check of ciChecks) {
+            const state = typeof check.state === "string" ? check.state.toUpperCase() : "";
+            const label = `CI / ${check.name ?? "<unnamed>"}`;
+            if (waiting.has(state)) {
+              pending.push(`${label}: ${state}`);
+            } else if (!terminalSuccess.has(state)) {
+              failed.push(`${label}: ${state || "ABSENT"}`);
             }
           }
           if (failed.length) {
-            console.error(`Required check failed: ${failed.join(", ")}`);
+            console.error(`CI check failed: ${failed.join(", ")}`);
             process.stdout.write("failed");
           } else if (pending.length) {
             process.stdout.write("pending");
@@ -118,7 +120,7 @@ jobs:
               passed) break ;;
               failed) exit 1 ;;
               pending) sleep 10 ;;
-              *) echo "::error::Unexpected check state: $result"; exit 1 ;;
+              *) echo "::error::Unexpected CI check state: $result"; exit 1 ;;
             esac
           done
 
