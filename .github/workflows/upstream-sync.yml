@@ -48,15 +48,39 @@ jobs:
           permission-workflows: write
           permission-pull-requests: write
 
-      - name: Verify and report sync app installation
+      - name: Verify sync app installation permissions
         env:
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          APP_ID: ${{ secrets.ZGE_PASEO_SYNC_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.ZGE_PASEO_SYNC_APP_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          echo "Sync GitHub App: $APP_SLUG"
-          echo "Sync GitHub App installation ID: $INSTALLATION_ID"
-          echo "Requested installation pull-requests permission: write"
+          base64url() {
+            base64 -w 0 | tr '+/' '-_' | tr -d '='
+          }
+          now="$(date +%s)"
+          header="$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64url)"
+          payload="$(jq -cn --arg iss "$APP_ID" --argjson iat "$((now - 60))" --argjson exp "$((now + 540))" '{iss: $iss, iat: $iat, exp: $exp}' | base64url)"
+          unsigned="$header.$payload"
+          signature="$(printf '%s' "$unsigned" | openssl dgst -sha256 -sign <(printf '%s' "$APP_PRIVATE_KEY") | base64url)"
+          app_jwt="$unsigned.$signature"
+          api() {
+            curl --fail-with-body --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $app_jwt" \
+              "https://api.github.com$1"
+          }
+          app="$(api /app)"
+          installation="$(api "/repos/$GITHUB_REPOSITORY/installation")"
+          app_slug="$(jq -r '.slug' <<< "$app")"
+          app_id="$(jq -r '.id' <<< "$app")"
+          permissions="$(jq -c '.permissions' <<< "$installation")"
+          pull_requests="$(jq -r '.pull_requests // "none"' <<< "$permissions")"
+          echo "Sync GitHub App: $app_slug (ID $app_id)"
+          echo "Effective installation permissions: $permissions"
+          if [ "$pull_requests" != "write" ]; then
+            echo "::error::Sync GitHub App $app_slug (ID $app_id) has pull_requests=$pull_requests; expected write."
+            exit 1
+          fi
 
       - name: Fetch upstream main
         uses: actions/checkout@v4
