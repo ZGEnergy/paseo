@@ -48,16 +48,6 @@ jobs:
           permission-workflows: write
           permission-pull-requests: write
 
-      - name: Verify and report sync app installation
-        env:
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
-        run: |
-          set -euo pipefail
-          echo "Sync GitHub App: $APP_SLUG"
-          echo "Sync GitHub App installation ID: $INSTALLATION_ID"
-          echo "Requested installation pull-requests permission: write"
-
       - name: Fetch upstream main
         uses: actions/checkout@v4
         with:
@@ -117,10 +107,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          title="Sync upstream main into internal/main"
+          body="Automated upstream sync from main into internal/main."
           number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
           if [ -n "$number" ]; then
-            gh pr edit "$number" --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main."
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
           else
-            number="$(gh pr create --base internal/main --head main --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main.")"
+            number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
-          gh pr merge "$number" --disable-auto
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$number/merge" -f merge_method=merge >/dev/null
