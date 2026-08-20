@@ -1,0 +1,119 @@
+name: Upstream import merge
+
+on:
+  pull_request_target:
+    branches: [internal/main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to evaluate
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.pull_request.base.repo.full_name == github.repository &&
+           github.event.pull_request.base.ref == 'internal/main' &&
+           github.event.pull_request.head.repo.full_name == github.repository &&
+           github.event.pull_request.head.ref != 'main') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select pull request
+        id: pull-request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_NUMBER: ${{ inputs.pull_request }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            number="$INPUT_NUMBER"
+          else
+            number="$EVENT_NUMBER"
+          fi
+          case "$number" in
+            ''|*[!0-9]*) echo "::error::Pull request must be a positive number"; exit 1 ;;
+          esac
+          if [ "$number" -lt 1 ]; then
+            echo "::error::Pull request must be a positive number"
+            exit 1
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/check-upstream-provenance.mjs
+
+      - name: Detect upstream import metadata
+        id: import
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/pull-request-body"
+          if node --input-type=module - "$RUNNER_TEMP/pull-request-body" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const body = readFileSync(process.argv[2], "utf8");
+          process.exit(/^Upstream issue\s*:/im.test(body) ? 0 : 1);
+          NODE
+          then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for required checks
+        if: steps.import.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: gh pr checks "$PULL_REQUEST" --repo "$REPOSITORY" --required --watch --interval 10
+
+      - name: Revalidate provenance immediately before merge
+        if: steps.import.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          node scripts/check-upstream-provenance.mjs \
+            --repository "$REPOSITORY" \
+            --pull-request "$PULL_REQUEST" \
+            --evidence "$RUNNER_TEMP/reconciliation-evidence.json"
+
+      - name: Merge validated import
+        if: steps.import.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          mode="$(node --input-type=module - "$RUNNER_TEMP/reconciliation-evidence.json" <<'NODE'
+          import { readFileSync } from "node:fs";
+          const evidence = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          process.stdout.write(evidence.mode);
+          NODE
+          )"
+          if [ "$mode" = "reconciled" ]; then
+            decision="$(gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json reviewDecision --jq .reviewDecision)"
+            if [ "$decision" != "APPROVED" ]; then
+              echo "Reconciled import remains open until one human approval is recorded."
+              exit 0
+            fi
+          elif [ "$mode" != "direct" ]; then
+            echo "::error::Unknown upstream import mode: $mode"
+            exit 1
+          fi
+          gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false

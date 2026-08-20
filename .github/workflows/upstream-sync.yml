@@ -1,0 +1,112 @@
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require internal/main as default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$DEFAULT_BRANCH" != "internal/main" ]; then
+            echo "::error::Repository default branch must be internal/main (found $DEFAULT_BRANCH)."
+            exit 1
+          fi
+
+      - name: Require sync app credentials
+        env:
+          APP_ID: ${{ secrets.ZGE_PASEO_SYNC_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.ZGE_PASEO_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::ZGE_PASEO_SYNC_APP_ID and ZGE_PASEO_SYNC_APP_PRIVATE_KEY secrets are required."
+            exit 1
+          fi
+
+      - name: Mint sync app installation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.ZGE_PASEO_SYNC_APP_ID }}
+          private-key: ${{ secrets.ZGE_PASEO_SYNC_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Fetch upstream main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Fast-forward fork main
+        id: fast-forward
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/getpaseo/paseo.git
+          git fetch upstream main
+          fork_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse FETCH_HEAD)"
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            title="Upstream sync blocked: fork main diverged"
+            body="$(cat <<EOF
+<!-- upstream-sync-divergence -->
+## Upstream sync blocked
+
+Fork \`main\` is not an ancestor of upstream \`main\`, so the mirror was not changed.
+
+- Fork \`main\` SHA: $fork_sha
+- Upstream \`main\` SHA: $upstream_sha
+
+## Recovery
+
+Have a maintainer inspect the divergence, remove fork-only commits from \`main\`, and restore it as an exact upstream mirror. Re-run **Upstream sync** only after \`main\` is an ancestor of upstream \`main\`; import fork-only work through \`internal/main\` instead.
+EOF
+)"
+            number="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')"
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --title "$title" --body "$body"
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
+            echo "::error::Upstream sync blocked: fork main $fork_sha diverged from upstream main $upstream_sha. See the actionable incident issue for recovery instructions."
+            echo "fast_forward=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          git push origin FETCH_HEAD:main
+          git fetch origin internal/main
+          if [ "$(git rev-list --count origin/internal/main..FETCH_HEAD)" -eq 0 ]; then
+            echo "No commits in main are absent from internal/main."
+            echo "sync_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "sync_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "fast_forward=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update sync pull request
+        if: steps.fast-forward.outputs.fast_forward == 'true' && steps.fast-forward.outputs.sync_needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main."
+          else
+            number="$(gh pr create --base internal/main --head main --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main.")"
+          fi
+          gh pr merge "$number" --auto --merge
