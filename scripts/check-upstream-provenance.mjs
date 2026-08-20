@@ -32,6 +32,17 @@ function ghApi(path, accept = "application/vnd.github+json") {
 function ghJson(path) {
   return JSON.parse(ghApi(path));
 }
+function ghPaginatedJson(path) {
+  const values = [];
+  for (let page = 1; ; page += 1) {
+    const separator = path.includes("?") ? "&" : "?";
+    const result = ghJson(`${path}${separator}per_page=100&page=${page}`);
+    if (!Array.isArray(result)) throw new Error(`GitHub API pagination returned a non-array for ${path}`);
+    values.push(...result);
+    if (result.length < 100) return values;
+  }
+}
+
 
 function metadataValue(body, label) {
   const match = body.match(new RegExp(`^${label}\\s*:\\s*(.*?)\\s*$`, "im"));
@@ -306,7 +317,14 @@ try {
       throw new Error(`Fork main mismatch: metadata ${forkMain}, current ${liveMainSha}`);
     }
 
-    const mergeCommit = ghJson(`repos/${repository}/commits/${reconciliationMerge}`);
+    const mergeCommit = ghPaginatedJson(
+      `repos/${repository}/pulls/${currentPullRequest}/commits`,
+    ).find((commit) => commit?.sha?.toLowerCase() === reconciliationMerge);
+    if (!mergeCommit) {
+      throw new Error(
+        `Reconciliation merge ${reconciliationMerge} was not found in pull request commits`,
+      );
+    }
     const mergeParents = Array.isArray(mergeCommit.parents)
       ? mergeCommit.parents.map((parent) =>
           shaFrom(parent?.sha ?? "", "Reconciliation merge parent"),
