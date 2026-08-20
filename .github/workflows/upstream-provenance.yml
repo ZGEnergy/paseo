@@ -4,6 +4,9 @@ on:
   pull_request_target:
     branches: [internal/main]
     types: [opened, edited, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    branches: [internal/main]
+    types: [submitted, dismissed]
   workflow_dispatch:
     inputs:
       pull_request:
@@ -19,12 +22,29 @@ jobs:
   reconcile:
     # main -> internal/main is created by the sync workflow and has no upstream
     # feature metadata; its CI and required human review provide the gate.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.base.repo.full_name != github.repository || github.event.pull_request.base.ref != 'internal/main' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.head.ref != 'main' }}
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.pull_request != null &&
+          github.event.pull_request.base != null &&
+          github.event.pull_request.base.repo != null &&
+          github.event.pull_request.head != null &&
+          github.event.pull_request.head.repo != null &&
+          (
+            github.event.pull_request.base.repo.full_name != github.repository ||
+            github.event.pull_request.base.ref != 'internal/main' ||
+            github.event.pull_request.head.repo.full_name != github.repository ||
+            github.event.pull_request.head.ref != 'main'
+          )
+        )
+      }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts/check-upstream-provenance.mjs
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'internal/main' || github.event.pull_request.base.sha }}
 
       - name: Verify upstream provenance and patch equivalence
         env:

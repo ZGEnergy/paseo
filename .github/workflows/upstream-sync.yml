@@ -87,9 +87,9 @@ jobs:
             echo "fast_forward=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          git push origin FETCH_HEAD:main
+          git push origin "$upstream_sha":main
           git fetch origin internal/main
-          if [ "$(git rev-list --count origin/internal/main..FETCH_HEAD)" -eq 0 ]; then
+          if [ "$(git rev-list --count origin/internal/main..$upstream_sha)" -eq 0 ]; then
             echo "No commits in main are absent from internal/main."
             echo "sync_needed=false" >> "$GITHUB_OUTPUT"
           else
@@ -109,4 +109,4 @@ jobs:
           else
             number="$(gh pr create --base internal/main --head main --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main.")"
           fi
-          gh pr merge "$number" --auto --merge
+          gh pr merge "$number" --disable-auto
