@@ -17,6 +17,24 @@ Clean direct imports (patch-equivalent to the upstream pull request) need no hum
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
 
+### Narrow downstream-governance exception
+
+A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
+
+- `scripts/check-upstream-provenance.mjs`
+- `docs/fork-governance.md`
+- `.github/workflows/ci.yml`
+- `.github/workflows/upstream-sync.yml`
+- `.github/workflows/upstream-import-merge.yml`
+- `.github/workflows/upstream-provenance.yml`
+- `.github/workflows/deploy-app.yml`
+- `.github/workflows/deploy-website.yml`
+- `.github/workflows/android-apk-release.yml`
+- `.github/workflows/desktop-release.yml`
+- `.github/workflows/deploy-relay.yml`
+
+This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. For a qualifying governance pull request, the checker intentionally does not require upstream metadata or assert upstream patch equivalence; it records the outcome as an exception instead. The governance exception requires an effective approval by a human GitHub user for the current pull-request head. An approval for an older head, an approval from a bot or GitHub App, and a dismissed approval do not count; submitting or dismissing a review reruns provenance so the current-head requirement is reevaluated. Evidence and the workflow summary identify this outcome as a downstream-governance exception. The checker always runs from trusted `internal/main` code, so this first exception change must be merged through the documented human/admin bootstrap process after a current-head approval; later governance pull requests use the review-triggered check.
+
 ## CI and permissions
 
 Required checks are the repository CI workflow and the provenance check for changes targeting `internal/main`. Governance workflows use narrow GitHub token permissions. The sync GitHub App must be installed on this repository with **Contents: write**, **Issues: write**, **Pull requests: write**, and **Workflows: write** repository permissions; Issues write is required only to create or update the single actionable divergence incident, and Workflows write is required because mirrored `main` can include workflow file changes. The workflow stores only `ZGE_PASEO_SYNC_APP_ID` and `ZGE_PASEO_SYNC_APP_PRIVATE_KEY` as secrets, mints a repository-scoped installation token at the start of each run, and uses that short-lived token for sync pushes, pull-request automation, and divergence incident updates. No persistent installation token is stored.
