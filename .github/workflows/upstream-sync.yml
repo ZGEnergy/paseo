@@ -48,40 +48,6 @@ jobs:
           permission-workflows: write
           permission-pull-requests: write
 
-      - name: Verify sync app installation permissions
-        env:
-          APP_ID: ${{ secrets.ZGE_PASEO_SYNC_APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.ZGE_PASEO_SYNC_APP_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          base64url() {
-            base64 -w 0 | tr '+/' '-_' | tr -d '='
-          }
-          now="$(date +%s)"
-          header="$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64url)"
-          payload="$(jq -cn --arg iss "$APP_ID" --argjson iat "$((now - 60))" --argjson exp "$((now + 540))" '{iss: $iss, iat: $iat, exp: $exp}' | base64url)"
-          unsigned="$header.$payload"
-          signature="$(printf '%s' "$unsigned" | openssl dgst -sha256 -sign <(printf '%s' "$APP_PRIVATE_KEY") | base64url)"
-          app_jwt="$unsigned.$signature"
-          api() {
-            curl --fail-with-body --silent --show-error \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $app_jwt" \
-              "https://api.github.com$1"
-          }
-          app="$(api /app)"
-          installation="$(api "/repos/$GITHUB_REPOSITORY/installation")"
-          app_slug="$(jq -r '.slug' <<< "$app")"
-          app_id="$(jq -r '.id' <<< "$app")"
-          permissions="$(jq -c '.permissions' <<< "$installation")"
-          pull_requests="$(jq -r '.pull_requests // "none"' <<< "$permissions")"
-          echo "Sync GitHub App: $app_slug (ID $app_id)"
-          echo "Effective installation permissions: $permissions"
-          if [ "$pull_requests" != "write" ]; then
-            echo "::error::Sync GitHub App $app_slug (ID $app_id) has pull_requests=$pull_requests; expected write."
-            exit 1
-          fi
-
       - name: Fetch upstream main
         uses: actions/checkout@v4
         with:
@@ -141,10 +107,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          title="Sync upstream main into internal/main"
+          body="Automated upstream sync from main into internal/main."
           number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
           if [ -n "$number" ]; then
-            gh pr edit "$number" --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main."
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
           else
-            number="$(gh pr create --base internal/main --head main --title "Sync upstream main into internal/main" --body "Automated upstream sync from main into internal/main.")"
+            number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
-          gh pr merge "$number" --disable-auto
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$number/merge" -f merge_method=merge >/dev/null
