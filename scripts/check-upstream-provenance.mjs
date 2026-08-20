@@ -472,7 +472,14 @@ try {
         throw new Error(`Fork main mismatch: metadata ${forkMain}, current ${liveMainSha}`);
       }
 
-      const mergeCommit = ghJson(`repos/${repository}/commits/${reconciliationMerge}`);
+      const mergeCommit = paginatedJson(
+        `repos/${repository}/pulls/${currentPullRequest}/commits`,
+      ).find((commit) => commit?.sha?.toLowerCase() === reconciliationMerge);
+      if (!mergeCommit) {
+        throw new Error(
+          `Reconciliation merge ${reconciliationMerge} was not found in pull request commits`,
+        );
+      }
       const mergeParents = Array.isArray(mergeCommit.parents)
         ? mergeCommit.parents.map((parent) =>
             shaFrom(parent?.sha ?? "", "Reconciliation merge parent"),
