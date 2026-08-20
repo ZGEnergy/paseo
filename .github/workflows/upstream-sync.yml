@@ -44,6 +44,22 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
+      - name: Verify sync app installation permissions
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          installation="$(gh api "repos/$GITHUB_REPOSITORY/installation")"
+          app_slug="$(jq -r '.app_slug' <<< "$installation")"
+          app_id="$(jq -r '.app_id' <<< "$installation")"
+          pull_requests="$(jq -r '.permissions.pull_requests // "none"' <<< "$installation")"
+          echo "Sync GitHub App: $app_slug (ID $app_id)"
+          echo "Effective installation pull-requests permission: $pull_requests"
+          if [ "$pull_requests" != "write" ]; then
+            echo "::error::Sync GitHub App $app_slug (ID $app_id) has pull-requests=$pull_requests; expected write. Check the installed App selected by ZGE_PASEO_SYNC_APP_ID."
+            exit 1
+          fi
+
       - name: Fetch upstream main
         uses: actions/checkout@v4
         with:
