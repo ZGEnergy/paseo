@@ -43,6 +43,9 @@ jobs:
           private-key: ${{ secrets.ZGE_PASEO_SYNC_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-workflows: write
           permission-pull-requests: write
 
       - name: Verify and report sync app installation
