@@ -247,6 +247,17 @@ export class OmpHarness {
     return { completion: run };
   }
 
+  startAutonomousTurnUntilProviderIdle(
+    output: string,
+    providerState: { isStreaming: boolean; isCompacting: boolean },
+  ): void {
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.streamAssistantText(output);
+    runtime.state = { ...runtime.state, ...providerState };
+    runtime.finishTurn();
+  }
+
   waitForProviderStateChecks(count: number): Promise<void> {
     return this.omp.latestSession().waitForStateRequests(count);
   }
@@ -404,6 +415,10 @@ export class OmpHarness {
       if (event.type === "timeline") items.push(event.item);
     }
     return items;
+  }
+
+  failedTurns(): Array<Extract<AgentStreamEvent, { type: "turn_failed" }>> {
+    return this.events.flatMap((event) => (event.type === "turn_failed" ? [event] : []));
   }
 
   completedTurnCount(): number {
