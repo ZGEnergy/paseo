@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -282,4 +282,17 @@ test("accepts changes covered by multiple scopes", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /2 changed path\(s\)/);
   });
+});
+
+test("documents the required integration ref in agent-facing preflight commands", () => {
+  for (const file of ["CLAUDE.md", "docs/fork-governance.md"]) {
+    const contents = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    const invocations = contents
+      .split("\n")
+      .filter((line) => line.includes("node scripts/check-upstream-port.mjs"));
+    assert.notEqual(invocations.length, 0, `${file} has no preflight invocation`);
+    for (const invocation of invocations) {
+      assert.match(invocation, /--integration-ref origin\/internal\/main(?:\s|$)/, file);
+    }
+  }
 });

@@ -22,7 +22,7 @@ If an upstream import is stale, the final provenance run fails and the bot does 
 An upstream-port pull request must start from the fetched `getpaseo/paseo` upstream `main`, not from `internal/main` or any other fork-descendant branch. Before creating the pull request, run the deterministic local guard with the candidate ref, fetched upstream ref, and every permitted path:
 
 ```sh
-node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref <fetched-upstream-ref> --allow-path <path>
+node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref <fetched-upstream-ref> --integration-ref origin/internal/main --allow-path <path>
 ```
 
 The guard resolves both refs locally, requires the upstream commit to be the candidate's merge base, and rejects every changed path outside the declared scopes using exact prefix boundaries. Repeat `--allow-path` for multiple scopes. The agent may run `gh pr create` only after successful preflight. The guard never fetches, interpolates shell input, or opens a pull request.
