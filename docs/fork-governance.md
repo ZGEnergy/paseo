@@ -17,6 +17,16 @@ Clean direct imports (patch-equivalent to the upstream pull request) need no hum
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
 
+## Upstream-port preflight
+
+An upstream-port pull request must start from the fetched `getpaseo/paseo` upstream `main`, not from `internal/main` or any other fork-descendant branch. Before creating the pull request, run the deterministic local guard with the candidate ref, fetched upstream ref, and every permitted path:
+
+```sh
+node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref <fetched-upstream-ref> --allow-path <path>
+```
+
+The guard resolves both refs locally, requires the upstream commit to be the candidate's merge base, and rejects every changed path outside the declared scopes using exact prefix boundaries. Repeat `--allow-path` for multiple scopes. The agent may run `gh pr create` only after successful preflight. The guard never fetches, interpolates shell input, or opens a pull request.
+
 ## Local ship gate
 
 Internal teammates run `/ship` locally for a pull request that targets `internal/main`. The operator uses their own review agent, posts its review to GitHub, and stops on a high-risk finding. The skill requires CI and provenance for the current head before review. A clean direct import may dispatch **Upstream import merge** after the review posts. A reconciled import requires the focused conflict-resolution review and the existing human approval before that dispatch. See `.claude/skills/ship/SKILL.md` for the procedure.
@@ -25,7 +35,10 @@ Internal teammates run `/ship` locally for a pull request that targets `internal
 
 A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
 
+- `CLAUDE.md`
 - `scripts/check-upstream-provenance.mjs`
+- `scripts/check-upstream-port.mjs`
+- `scripts/check-upstream-port.test.mjs`
 - `scripts/ci-workflow.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`

@@ -34,7 +34,11 @@ function ghJson(path) {
 }
 const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/check-upstream-provenance.mjs",
+  "scripts/check-upstream-port.mjs",
+  "scripts/check-upstream-port.test.mjs",
+  "scripts/ci-workflow.test.mjs",
   "docs/fork-governance.md",
+  "CLAUDE.md",
   ".github/workflows/ci.yml",
   ".github/workflows/upstream-sync.yml",
   ".github/workflows/upstream-import-merge.yml",
@@ -45,7 +49,6 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   ".github/workflows/desktop-release.yml",
   ".github/workflows/deploy-relay.yml",
   ".claude/skills/ship/SKILL.md",
-  "scripts/ci-workflow.test.mjs",
 ]);
 const DOWNSTREAM_GOVERNANCE_PATH_SET = new Set(DOWNSTREAM_GOVERNANCE_PATHS);
 

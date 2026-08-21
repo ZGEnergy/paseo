@@ -10,6 +10,7 @@ const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const upstreamSyncWorkflowPath = new URL(".github/workflows/upstream-sync.yml", repoRoot);
 const relayDeployWorkflowPath = new URL(".github/workflows/deploy-relay.yml", repoRoot);
 const provenanceScriptPath = new URL("scripts/check-upstream-provenance.mjs", repoRoot);
+const upstreamPortTestPath = new URL("scripts/check-upstream-port.test.mjs", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -136,6 +137,11 @@ test("focused contracts stay inside existing required checks", () => {
   const server = jobs.get("server-tests-ubuntu")?.join("\n") ?? "";
   const desktop = jobs.get("desktop-tests-ubuntu")?.join("\n") ?? "";
 
+  assert.ok(readFileSync(upstreamPortTestPath, "utf8").length > 0);
+  assert.match(
+    changes,
+    /node --test scripts\/ci-workflow\.test\.mjs scripts\/daemon-launch-contract\.test\.mjs scripts\/check-upstream-port\.test\.mjs/,
+  );
   assert.match(changes, /scripts\/daemon-launch-contract\.test\.mjs/);
   assert.doesNotMatch(changes, /Install dependencies|npm run build/);
 
