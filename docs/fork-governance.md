@@ -11,21 +11,22 @@ This repository is the public `ZGEnergy/paseo` fork. Keep the fork's `main` bran
 
 ## Provenance and review
 
-Every internal feature or imported upstream change must identify its upstream issue, upstream pull request, upstream head repository, and upstream pull-request head SHA in the pull-request body. The **Upstream provenance** check verifies that metadata against the public upstream API, confirms the base repository, actual head repository, and SHA, compares every upstream and fork pull-request patch ID in order, and uploads reconciliation evidence. A mismatch blocks the pull request.
+Internal pull requests targeting `internal/main` use one of three mutually exclusive modes:
 
-Clean direct imports (patch-equivalent to the upstream pull request) need no human approval. The import bot reruns provenance immediately before its merge decision, waits for required CI checks, and merges only after that final check passes. Reconciled imports (those with `Fork main:` and `Reconciliation merge:` metadata) retain one human approval because their conflict resolution requires review.
+- **Upstream import** (default): identifies its upstream issue, pull request, head repository, and upstream pull-request head SHA. The **Upstream provenance** check verifies that metadata against the public upstream API, confirms the base repository, actual head repository, and SHA, compares every upstream and fork pull-request patch ID in order, and uploads reconciliation evidence. Direct imports need no human approval; reconciled imports (with `Fork main:` and `Reconciliation merge:` metadata) retain one human approval because conflict resolution requires review.
+- **Downstream governance**: uses the exact body marker `Downstream governance: true` and is restricted to the governance allowlist below. It does not assert upstream patch equivalence, but requires one non-author human `APPROVED` review of the current pull-request head.
+- **Downstream feature**: uses exactly `Downstream feature: true` plus one non-empty `Downstream rationale:` line. It is fork-only, requires one non-author human `APPROVED` review of the current pull-request head, and cannot change governance-allowlisted files or any `.github/workflows/` file.
+
+Feature and governance markers cannot coexist with each other or with upstream-provenance metadata. A review on an older head, a dismissed review, an author review, or a bot review does not satisfy either exception. Any new commit invalidates prior approval until a reviewer approves the new head.
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
-
-## Local ship gate
-
-Internal teammates run `/ship` locally for a pull request that targets `internal/main`. The operator uses their own review agent, posts its review to GitHub, and stops on a high-risk finding. The skill requires CI and provenance for the current head before review. A clean direct import may dispatch **Upstream import merge** after the review posts. A reconciled import requires the focused conflict-resolution review and the existing human approval before that dispatch. See `.claude/skills/ship/SKILL.md` for the procedure.
 
 ### Narrow downstream-governance exception
 
 A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
 
 - `scripts/check-upstream-provenance.mjs`
+- `scripts/check-upstream-provenance.test.mjs`
 - `scripts/ci-workflow.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`
@@ -38,7 +39,12 @@ A fork-only governance pull request may select the narrow exception only with th
 - `.github/workflows/desktop-release.yml`
 - `.github/workflows/deploy-relay.yml`
 - `.claude/skills/ship/SKILL.md`
-  This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. For a qualifying governance pull request, the checker intentionally does not require upstream metadata or assert upstream patch equivalence; it records the outcome as an exception instead. The exception does not require a pull-request approval. Evidence and the workflow summary identify this outcome as a downstream-governance exception.
+
+This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. A qualifying governance pull request requires the same current-head non-author human approval resolver as a downstream feature, does not assert upstream patch equivalence, and records its outcome as a downstream-governance exception.
+
+## Local ship gate
+
+Internal teammates run `/ship` locally for a pull request that targets `internal/main`. The operator uses their own review agent, posts its review to GitHub, and stops on a high-risk finding. The skill requires CI and provenance for the current head before review. A clean direct import may dispatch **Upstream import merge** after the review posts. A reconciled import requires the focused conflict-resolution review and the existing human approval before that dispatch. See `.claude/skills/ship/SKILL.md` for the procedure.
 
 ## CI and permissions
 

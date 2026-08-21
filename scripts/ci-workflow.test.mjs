@@ -123,11 +123,11 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
 });
-test("governance exceptions do not require approval reviews", () => {
+test("governance exceptions enforce current-head human approval", () => {
   const provenance = readFileSync(provenanceScriptPath, "utf8");
 
-  assert.doesNotMatch(provenance, /pulls\/\$\{pullRequest\}\/reviews/);
-  assert.doesNotMatch(provenance, /effective human approval/);
+  assert.match(provenance, /pulls\/\$\{pullRequest\}\/reviews/);
+  assert.match(provenance, /non-author human approval of the current pull request head/);
 });
 
 test("focused contracts stay inside existing required checks", () => {
