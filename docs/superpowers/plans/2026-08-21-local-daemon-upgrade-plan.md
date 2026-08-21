@@ -2,28 +2,31 @@
 
 > Design: `docs/superpowers/specs/2026-08-21-local-daemon-upgrade-design.md`
 
-## 1. Extract restart-safe daemon launch support
+## 1. Persist CLI lifecycle metadata
 
 **Files**
 
+- Modify `packages/server/src/server/pid-lock.ts`
+- Modify `packages/server/src/server/pid-lock.test.ts`
 - Modify `packages/cli/src/commands/daemon/local-daemon.ts`
 - Modify `packages/cli/src/commands/daemon/local-daemon.test.ts`
 
 **Changes**
 
-- Expose a narrow typed operation that starts a detached daemon from an explicit executable/runner and a complete, inspected launch descriptor.
-- Keep the existing public CLI behavior unchanged.
-- Add a descriptor derived from the local PID/status state. It must carry the persisted home, listen target, and values sourced from `config.json`; it must identify a desktop-managed daemon and unsupported ephemeral overrides.
-- Make the descriptor builder reject unsafe restart cases instead of silently applying defaults.
-- Keep stop behavior graceful and retain the existing timeout/force semantics for recovery.
+- Extend the PID-lock record with a versioned lifecycle section: manager, effective non-secret launch descriptor, source revision, closure root, and server identity.
+- Bind lifecycle data to the actual process PID and reject stale, malformed, or mismatched records.
+- Make every CLI start pass `manager=cli` and a complete effective descriptor. Preserve existing desktop/system starts as non-CLI owners; they must never be upgradable by this feature.
+- Keep auth material and other secrets out of the record. Record only the concrete values needed to reproduce CLI-owned launch behavior.
+- Add an explicit bootstrap path for legacy daemons. It requires every effective launch option, never derives them from process state, and writes the first valid CLI lifecycle record.
 
 **Tests**
 
-- Verify a descriptor retains home and listen address.
-- Verify desktop-managed and unsupported launch cases fail before a stop is requested.
-- Verify the detached process receives the reconstructed runner arguments and environment.
+- CLI starts write lifecycle metadata with the actual PID and server identity.
+- Stale, corrupt, PID-mismatched, and identity-mismatched records are rejected.
+- Desktop and system-service launches do not identify as CLI-managed.
+- Bootstrap rejects omitted launch values and emits a valid record only with explicit inputs.
 
-## 2. Add an upgrade transaction module
+## 2. Add an attested upgrade transaction
 
 **Files**
 
@@ -32,22 +35,22 @@
 
 **Changes**
 
-- Define a dependency-injected upgrade transaction. Dependencies own command execution, filesystem links, locking, status polling, timing, and daemon lifecycle actions.
-- Resolve release storage to `${XDG_DATA_HOME:-$HOME/.local/share}/paseo/releases`.
-- Build `.#paseo` into a staged Nix output link without stopping the daemon.
-- Save the previous `current` target, atomically switch `current`, start the new runner, and poll daemon status until a bounded deadline.
-- On startup or health failure, atomically restore `current`, restart the old runner using the captured descriptor, preserve the original upgrade error, and surface the daemon log path.
-- Guarantee lock cleanup in `finally`, including failed build, failed switch, and failed rollback paths.
+- Define a dependency-injected transaction owning Nix invocation, indirect GC roots, release links, lock lifetime, daemon lifecycle, status polling, and time.
+- Resolve release storage to `${XDG_DATA_HOME:-$HOME/.local/share}/paseo/releases`. Build each closure under an immutable `roots/<revision>` indirect GC-root path; retain the active and immediately previous roots.
+- Accept only an attested live `manager=cli` lifecycle record. Reject legacy, desktop, system, unknown, unsafe, or mismatched records before touching roots or stopping a daemon.
+- Build before stopping the old daemon. Atomically move `current` and `previous` release links only after the root is complete.
+- Start the new closure with the captured descriptor plus expected revision/root. Treat health as successful only when a new PID, unchanged server identity/listen target, and matching lifecycle record attest to that exact revision/root.
+- On any new-daemon startup or health failure, stop the new supervisor using the existing graceful/force sequence; wait for its PID lock and endpoint to release; restore links; restart and attest the prior root. Preserve the original error and daemon log path even when rollback also fails.
+- Release the process lock in every exit path and prune only roots older than the retained rollback generation after a successful transaction.
 
 **Tests**
 
-- Build completes before stopping the old daemon.
-- Successful health status retains the new `current` target.
-- Failed startup restores the prior target and restarts it.
-- Health timeout restores the prior target and restarts it.
-- Concurrent transactions fail before any build or lifecycle operation.
+- Build completes before old-daemon stop.
+- Successful upgrade retains the expected root and requires all attestation fields.
+- A live-but-unhealthy new supervisor is stopped before links are restored and the old daemon starts.
+- Startup failure, health timeout, rollback failure, concurrent invocation, and GC-root retention have deterministic outcomes.
 
-## 3. Expose the operator command
+## 3. Expose safe CLI commands
 
 **Files**
 
@@ -58,18 +61,16 @@
 
 **Changes**
 
-- Add `paseo daemon upgrade-local` with `--home` and bounded timeout options.
-- Verify Nix is available before inspecting or changing release links; report a concise prerequisite error otherwise.
-- Emit structured and human-readable results including resolved source commit, previous/new release targets, effective home/listen target, and rollback outcome.
-- Register command help and JSON output according to existing daemon command conventions.
+- Add `paseo daemon upgrade-local` with source checkout, revision, `--home`, and bounded timeout options.
+- Add `paseo daemon bootstrap-upgrade` for the explicit legacy transition. Require every launch setting and reject when the caller attempts to infer one.
+- Verify Nix before inspecting or changing roots. Emit structured results containing the revision, roots, launch owner, expected/observed attestation, rollback result, and log path.
 
 **Tests**
 
-- Command registration and help output.
-- Invalid timeout validation.
-- Missing Nix, desktop-managed daemon, and rollback error results are stable in JSON and terminal output.
+- Command registration, help, JSON output, and timeout validation.
+- Missing Nix, invalid lifecycle owner, first-run bootstrap, health-attestation mismatch, and rollback errors.
 
-## 4. Provide the `internal/main` entry point
+## 4. Provide the `internal/main` entry point and stable launcher
 
 **Files**
 
@@ -79,15 +80,16 @@
 
 **Changes**
 
-- Add `npm run upgrade:local` as the supported checkout command.
-- The shell entry point validates that the checkout is clean and currently on `internal/main`, records the exact commit, and delegates lifecycle work to `paseo daemon upgrade-local` from the built/current closure.
-- Keep shell limited to source checkout validation and invocation. Keep transaction behavior in TypeScript so it is unit-testable.
-- Do not install Nix, mutate global npm package directories, or touch any data outside the release-link directory and configured `PASEO_HOME` lifecycle files.
+- Add `npm run upgrade:local`.
+- Validate Nix, a clean checkout, and exact `internal/main` before any daemon action. Build a staged closure and invoke its absolute `bin/paseo` path, so the initial rollout does not depend on an existing upgraded CLI or `current` link.
+- On successful upgrade or bootstrap, atomically install `${XDG_BIN_HOME:-$HOME/.local/bin}/paseo` as a stable launcher through `releases/current/bin/paseo`. Report when that directory loses PATH precedence to an existing npm launcher; never edit PATH or npm globals.
+- Keep shell limited to validation, staging, and absolute-CLI invocation. Keep transaction logic in TypeScript.
 
 **Tests**
 
-- Reject a dirty checkout and wrong branch before invoking Nix or daemon lifecycle actions.
-- Verify the exact `internal/main` commit is passed through to the CLI transaction.
+- Reject dirty/wrong source before Nix or lifecycle actions.
+- First run uses the staged closure without `current`/`previous`.
+- Stable launcher points through `current`; subsequent upgrades and rollback resolve the expected CLI.
 
 ## 5. Document and validate
 
@@ -97,13 +99,12 @@
 
 **Changes**
 
-- Add the operator command, Nix prerequisite, CLI-managed-daemon restriction, release-link location, rollback behavior, preserved state, and reconnect window.
-- Link to this behavior from the existing `PASEO_HOME`/daemon lifecycle guidance rather than duplicating state semantics.
+- Document Nix prerequisite, CLI-only ownership/legacy refusal, bootstrap command, release root and retention policy, launcher/PATH behavior, state preservation, rollback, and reconnect window.
 
 **Verification**
 
 1. Run each changed test file with `npx vitest run <file> --bail=1`.
-2. Run `npm run typecheck` and `npm run lint`.
-3. Run `npm run format`.
-4. On a Nix-equipped isolated home, launch a CLI-managed daemon, pair a client, run `npm run upgrade:local`, and confirm the same `PASEO_HOME`, listen target, and server identity after reconnect.
-5. Inject a post-switch health failure and confirm the old release link and daemon version are restored.
+2. Run `npm run typecheck`, `npm run lint`, and `npm run format`.
+3. On a Nix-equipped isolated home, first bootstrap a legacy CLI daemon with explicit values, then run a normal upgrade and confirm the same home, listen target, and server identity after reconnect.
+4. Inject a live-but-unhealthy new daemon and confirm it terminates before the prior root restarts.
+5. Run Nix garbage collection during the retained rollback window and verify active and prior roots still start.
