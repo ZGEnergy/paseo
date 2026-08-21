@@ -1,7 +1,7 @@
 import React, { useMemo, type CSSProperties } from "react";
 import { ParseError, renderToString } from "katex";
 import "katex/dist/katex.min.css";
-import type { StyleProp, TextStyle } from "react-native";
+import { StyleSheet, type StyleProp, type TextStyle } from "react-native";
 const DISPLAY_STYLE: CSSProperties = {
   display: "block",
   maxWidth: "100%",
@@ -22,7 +22,7 @@ export interface MathFormulaProps {
   textStyle?: StyleProp<TextStyle>;
 }
 
-export function MathFormula({ expression, source, displayMode }: MathFormulaProps) {
+export function MathFormula({ expression, source, displayMode, textStyle }: MathFormulaProps) {
   const rendered = useMemo(() => {
     const compactExpression = displayMode
       ? expression
@@ -43,6 +43,15 @@ export function MathFormula({ expression, source, displayMode }: MathFormulaProp
     }
   }, [displayMode, expression]);
 
+  const color = StyleSheet.flatten(textStyle)?.color;
+  const styles = useMemo(() => {
+    const colorStyle: CSSProperties | undefined = typeof color === "string" ? { color } : undefined;
+    return {
+      display: { ...DISPLAY_STYLE, ...colorStyle },
+      inline: { ...INLINE_STYLE, ...colorStyle },
+    };
+  }, [color]);
+
   if (!rendered) {
     return <code>{source}</code>;
   }
@@ -51,7 +60,7 @@ export function MathFormula({ expression, source, displayMode }: MathFormulaProp
     return (
       <span
         aria-label={source}
-        style={DISPLAY_STYLE}
+        style={styles.display}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX emits sanitized markup with trust disabled.
         dangerouslySetInnerHTML={rendered}
       />
@@ -61,7 +70,7 @@ export function MathFormula({ expression, source, displayMode }: MathFormulaProp
   return (
     <span
       aria-label={source}
-      style={INLINE_STYLE}
+      style={styles.inline}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX emits sanitized markup with trust disabled.
       dangerouslySetInnerHTML={rendered}
     />
