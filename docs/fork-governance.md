@@ -59,3 +59,7 @@ Required checks are the repository CI workflow and the provenance check for chan
 ## Release and relay isolation
 
 This fork must not publish to upstream release destinations. Release workflows may create GitHub-native artifacts only in the repository where they run. Inherited external deployment paths for Cloudflare app and website deployments, Expo Android publishing, Apple signing/notarization, and relay deployment use exact-repository guards (`github.repository == 'ZGEnergy/paseo'`); those guards do not block GitHub-native release artifacts in forks. The relay implementation and its default endpoint remain unchanged.
+
+Desktop auto-update is off in this fork. `packages/desktop/electron-builder.yml` still names `getpaseo/paseo` as its publish target, so the `app-update.yml` baked into a packaged build resolves to upstream's releases; an enabled updater would replace a fork build with an upstream one. `packages/desktop/src/features/auto-updater.ts` short-circuits the update check, the download-and-install path, and the install-on-quit path unless `PASEO_FORK_ENABLE_AUTO_UPDATE=1`. Set that variable only once this fork publishes desktop releases and `electron-builder.yml` points at them.
+
+Build the desktop app locally with `npm run build:desktop`. macOS builds here are unsigned and unnotarized, so clear the quarantine attribute after installing: `xattr -dr com.apple.quarantine /Applications/Paseo.app`.
