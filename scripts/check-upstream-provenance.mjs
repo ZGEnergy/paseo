@@ -35,6 +35,9 @@ function ghJson(path) {
 const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/check-upstream-provenance.mjs",
   "scripts/check-upstream-provenance.test.mjs",
+  "scripts/check-upstream-port.mjs",
+  "scripts/check-upstream-port.test.mjs",
+  "CLAUDE.md",
   "docs/fork-governance.md",
   ".github/workflows/ci.yml",
   ".github/workflows/upstream-sync.yml",
