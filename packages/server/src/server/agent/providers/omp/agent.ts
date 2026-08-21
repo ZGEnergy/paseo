@@ -81,6 +81,7 @@ import type {
   OmpModel,
   OmpRuntimeEvent,
   OmpSessionState,
+  OmpSubagentSnapshot,
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import {
@@ -137,6 +138,8 @@ export interface OmpAgentClientOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  /** Monotonic clock for the provider-idle budget; injected by tests. */
+  now?: () => number;
 }
 
 export interface OmpProviderIdleAttempt {
@@ -207,6 +210,7 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  now?: () => number;
   paseoTools?: PaseoToolCatalog;
   /**
    * When false (resumed sessions), replayed session events are dropped until
@@ -233,6 +237,10 @@ const OMP_PROVIDER_IDLE_BUDGET_MS = 60_000;
 // idle budget. Waiting on a reported compaction is not the stall this gate guards
 // against, but it still needs an end.
 const OMP_PROVIDER_COMPACTING_BUDGET_MS = 600_000;
+// Measured from the last snapshot that actually listed a running child, not from
+// the start of the fan-out: a fan-out has no bounded length, but OMP going quiet
+// about one does.
+const OMP_PROVIDER_SUBAGENT_BUDGET_MS = 600_000;
 // A get_state rejection already costs a full RPC timeout, so a few in a row are
 // enough evidence that the state path is gone.
 const OMP_PROVIDER_IDLE_FAILURE_BUDGET = 3;
@@ -240,6 +248,25 @@ const OMP_PROVIDER_IDLE_FAILURE_BUDGET = 3;
 function ompProviderIdleRetryDelayMs(attempt: number): number {
   const backoff = OMP_PROVIDER_IDLE_MIN_RETRY_MS * 2 ** (attempt - 1);
   return Math.min(OMP_PROVIDER_IDLE_MAX_RETRY_MS, backoff);
+}
+
+function ompProviderIdleBudgetMs(waitingOnSubagents: boolean, compacting: boolean): number {
+  if (waitingOnSubagents) {
+    return OMP_PROVIDER_SUBAGENT_BUDGET_MS;
+  }
+  return compacting ? OMP_PROVIDER_COMPACTING_BUDGET_MS : OMP_PROVIDER_IDLE_BUDGET_MS;
+}
+
+type OmpProviderIdleWaitClass = "compacting" | "subagents" | "other";
+
+function ompProviderIdleWaitClass(
+  compacting: boolean,
+  subagentsConfirmed: boolean,
+): OmpProviderIdleWaitClass {
+  if (compacting) {
+    return "compacting";
+  }
+  return subagentsConfirmed ? "subagents" : "other";
 }
 
 export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -254,16 +281,7 @@ export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
       if (consecutiveFailures >= OMP_PROVIDER_IDLE_FAILURE_BUDGET) {
         return { retry: false, reason: "failure_budget" };
       }
-      // A current snapshot reporting running children is positive evidence that
-      // OMP is working, and a fan-out has no bounded length. Stale evidence is
-      // not: the budget resumes as soon as get_subagents stops answering.
-      if (isWaitingOnSubagents) {
-        await delay(ompProviderIdleRetryDelayMs(attempt));
-        return { retry: true };
-      }
-      const budgetMs = isCompacting
-        ? OMP_PROVIDER_COMPACTING_BUDGET_MS
-        : OMP_PROVIDER_IDLE_BUDGET_MS;
+      const budgetMs = ompProviderIdleBudgetMs(isWaitingOnSubagents, isCompacting);
       if (elapsedMs >= budgetMs) {
         return { retry: false, reason: "wait_budget" };
       }
@@ -595,6 +613,23 @@ function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
     return null;
   }
   return formatOmpErrorMessage(latestAssistant);
+}
+
+function ompStalledTurnMessage(stateUnavailable: boolean, subagentsBlocked: boolean): string {
+  if (stateUnavailable) {
+    return "OMP finished its response but its state is unavailable, so Paseo cannot confirm the turn ended.";
+  }
+  if (subagentsBlocked) {
+    return "OMP finished its response but never finished its running subagents, so Paseo stopped waiting for the turn to end.";
+  }
+  return "OMP finished its response but never reported an idle state, so Paseo stopped waiting for the turn to end.";
+}
+
+function ompStalledTurnCode(stateUnavailable: boolean, subagentsBlocked: boolean): string {
+  if (stateUnavailable) {
+    return "omp_provider_state_unavailable";
+  }
+  return subagentsBlocked ? "omp_provider_subagent_stall" : "omp_provider_idle_timeout";
 }
 
 /** Newest agent_end wins, unless it would discard an error the gate already holds. */
@@ -956,6 +991,7 @@ export class OmpAgentSession implements AgentSession {
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
+  private readonly now: () => number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
   private closed = false;
@@ -971,6 +1007,7 @@ export class OmpAgentSession implements AgentSession {
     this.paseoTools = options.paseoTools;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
+    this.now = options.now ?? (() => performance.now());
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -2323,12 +2360,14 @@ export class OmpAgentSession implements AgentSession {
     const gate = { key, messages };
     this.providerIdleGate = gate;
     try {
-      const startedAt = performance.now();
+      let budgetStartedAt = this.now();
+      let waitClass: OmpProviderIdleWaitClass = "other";
       let attempt = 0;
       let consecutiveFailures = 0;
       let lastState: OmpSessionState | null = null;
       let lastError: unknown = null;
-      let waitingOnSubagents = false;
+      let subagentsRunning = false;
+      let subagentsConfirmed = false;
       while (this.ownsProviderIdleGate(turnId)) {
         attempt += 1;
         try {
@@ -2340,7 +2379,8 @@ export class OmpAgentSession implements AgentSession {
           // writing after agent_end / isStreaming=false (#2232).
           const modelBusy = state.isStreaming || state.isCompacting;
           const subagents = modelBusy ? null : await this.pollOmpSubagents();
-          waitingOnSubagents = subagents ? subagents.running && subagents.fresh : false;
+          subagentsRunning = subagents?.running ?? subagentsRunning;
+          subagentsConfirmed = subagents?.listedRunning ?? false;
           if (subagents && !subagents.running) {
             this.completeTurnIfGateOwned(turnId, gate.messages);
             return;
@@ -2348,17 +2388,31 @@ export class OmpAgentSession implements AgentSession {
         } catch (error) {
           lastError = error;
           consecutiveFailures += 1;
+          subagentsConfirmed = false;
           this.logger.debug(
             { err: error },
             "OMP state unavailable while waiting for provider idle",
           );
         }
+        // Each condition gets its own budget, measured from when that condition
+        // began — otherwise a fan-out that ran for ten minutes blows the 60 s
+        // stall budget the instant the parent picks its results back up. A
+        // confirmed subagent report also restarts the clock, because every reply
+        // naming a running child is fresh evidence rather than elapsed silence.
+        const nextClass = ompProviderIdleWaitClass(
+          lastState?.isCompacting === true,
+          subagentsConfirmed,
+        );
+        if (nextClass !== waitClass || nextClass === "subagents") {
+          waitClass = nextClass;
+          budgetStartedAt = this.now();
+        }
         const decision = await this.providerIdleScheduler.waitForRetry({
           attempt,
           consecutiveFailures,
-          elapsedMs: performance.now() - startedAt,
-          isCompacting: lastState?.isCompacting === true,
-          isWaitingOnSubagents: waitingOnSubagents,
+          elapsedMs: this.now() - budgetStartedAt,
+          isCompacting: nextClass === "compacting",
+          isWaitingOnSubagents: nextClass === "subagents",
         });
         if (!decision.retry) {
           if (!this.ownsProviderIdleGate(turnId)) {
@@ -2370,7 +2424,8 @@ export class OmpAgentSession implements AgentSession {
             consecutiveFailures,
             lastState,
             lastError,
-            waitingOnSubagents,
+            subagentsRunning,
+            subagentsConfirmed,
           });
           return;
         }
@@ -2386,19 +2441,32 @@ export class OmpAgentSession implements AgentSession {
    * `fresh` reports whether this answer came from a snapshot OMP actually
    * returned. The idle budget trusts running children only while it does.
    */
-  private async pollOmpSubagents(): Promise<{ running: boolean; fresh: boolean }> {
-    let fresh = true;
+  private async pollOmpSubagents(): Promise<{ running: boolean; listedRunning: boolean }> {
+    let snapshots: OmpSubagentSnapshot[] | null = null;
     try {
-      const snapshots = await this.runtimeSession.getSubagents();
+      snapshots = await this.runtimeSession.getSubagents();
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
+    }
+    if (snapshots) {
       for (const event of this.subagentIndex.reconcileSnapshots(this.runtimeSession, snapshots)) {
         this.emit(event);
       }
-    } catch (error) {
-      fresh = false;
-      this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
     }
     this.settleDeferredTaskCalls();
-    return { running: this.subagentIndex.hasRunning(this.runtimeSession), fresh };
+    return {
+      // `running` is what the gate waits on (#2232). `listedRunning` is what the
+      // budget trusts: a reply OMP actually returned naming a child still going.
+      // The index also keeps never-listed lifecycle children running, and those
+      // are not evidence that anything is still happening.
+      running: this.subagentIndex.hasRunning(this.runtimeSession),
+      listedRunning: (snapshots ?? []).some(
+        (snapshot) =>
+          snapshot.status !== "completed" &&
+          snapshot.status !== "failed" &&
+          snapshot.status !== "aborted",
+      ),
+    };
   }
 
   private failStalledTurn(
@@ -2409,11 +2477,13 @@ export class OmpAgentSession implements AgentSession {
       consecutiveFailures: number;
       lastState: OmpSessionState | null;
       lastError: unknown;
-      waitingOnSubagents: boolean;
+      subagentsRunning: boolean;
+      subagentsConfirmed: boolean;
     },
   ): void {
     // A hanging state path burns the wait budget before the failure budget, so a
     // gate that never saw a state is an unavailable state path whichever ran out.
+    const subagentsBlocked = context.subagentsRunning;
     const stateUnavailable =
       context.reason === "failure_budget" || (!context.lastState && context.lastError !== null);
     // Both observations go into every diagnostic: which budget ran out says what
@@ -2433,8 +2503,12 @@ export class OmpAgentSession implements AgentSession {
         `last get_state error${failureCount}: ${toDiagnosticErrorMessage(context.lastError)}`,
       );
     }
-    if (context.waitingOnSubagents) {
-      details.push("OMP still reported running subagents");
+    if (context.subagentsRunning) {
+      details.push(
+        context.subagentsConfirmed
+          ? "OMP still listed running subagents"
+          : "OMP still held running subagents it would not confirm",
+      );
     }
     const diagnostic = details.join("; ");
     this.logger.warn(
@@ -2450,10 +2524,8 @@ export class OmpAgentSession implements AgentSession {
       type: "turn_failed",
       provider: this.provider,
       turnId,
-      error: stateUnavailable
-        ? "OMP finished its response but its state is unavailable, so Paseo cannot confirm the turn ended."
-        : "OMP finished its response but never reported an idle state, so Paseo stopped waiting for the turn to end.",
-      code: stateUnavailable ? "omp_provider_state_unavailable" : "omp_provider_idle_timeout",
+      error: ompStalledTurnMessage(stateUnavailable, subagentsBlocked),
+      code: ompStalledTurnCode(stateUnavailable, subagentsBlocked),
       diagnostic,
     });
   }
@@ -2477,6 +2549,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly modelRoleParams: OmpModelRoleParams;
   private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
+  private readonly now?: () => number;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly runtime: OmpRuntime;
@@ -2500,6 +2573,7 @@ export class OmpAgentClient implements AgentClient {
     this.modelRoleParams = modelRoleParams;
     this.subagentCardScheduler = options.subagentCardScheduler;
     this.providerIdleScheduler = options.providerIdleScheduler;
+    this.now = options.now;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
     this.runtime = options.runtime ?? createRuntime(options.logger, runtimeSettings);
@@ -2541,6 +2615,7 @@ export class OmpAgentClient implements AgentClient {
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        now: this.now,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
@@ -2583,6 +2658,7 @@ export class OmpAgentClient implements AgentClient {
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        now: this.now,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
