@@ -38,8 +38,7 @@ A fork-only governance pull request may select the narrow exception only with th
 - `.github/workflows/desktop-release.yml`
 - `.github/workflows/deploy-relay.yml`
 - `.claude/skills/ship/SKILL.md`
-
-This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. For a qualifying governance pull request, the checker intentionally does not require upstream metadata or assert upstream patch equivalence; it records the outcome as an exception instead. The governance exception requires an effective approval by a human GitHub user for the current pull-request head. An approval for an older head, an approval from a bot or GitHub App, and a dismissed approval do not count; submitting or dismissing a review reruns provenance so the current-head requirement is reevaluated. Evidence and the workflow summary identify this outcome as a downstream-governance exception. The checker always runs from trusted `internal/main` code, so this first exception change must be merged through the documented human/admin bootstrap process after a current-head approval; later governance pull requests use the review-triggered check.
+  This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. For a qualifying governance pull request, the checker intentionally does not require upstream metadata or assert upstream patch equivalence; it records the outcome as an exception instead. The exception does not require a pull-request approval. Evidence and the workflow summary identify this outcome as a downstream-governance exception.
 
 ## CI and permissions
 

@@ -7,6 +7,9 @@ const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
+const upstreamSyncWorkflowPath = new URL(".github/workflows/upstream-sync.yml", repoRoot);
+const relayDeployWorkflowPath = new URL(".github/workflows/deploy-relay.yml", repoRoot);
+const provenanceScriptPath = new URL("scripts/check-upstream-provenance.mjs", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -107,6 +110,24 @@ test("change gating allows superseded workflow runs to cancel", () => {
       "always() keeps jobs alive after concurrency cancellation; use !cancelled() for fail-open gating",
     );
   }
+});
+
+test("fork governance workflows retain their enforcement boundaries", () => {
+  const upstreamSync = readFileSync(upstreamSyncWorkflowPath, "utf8");
+  const relayDeploy = readFileSync(relayDeployWorkflowPath, "utf8");
+
+  assert.match(upstreamSync, /Require internal\/main as default branch/);
+  assert.match(upstreamSync, /gh api --method POST "repos\/\$GITHUB_REPOSITORY\/pulls"/);
+  assert.doesNotMatch(upstreamSync, /pulls\/\$number\/merge/);
+
+  assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
+  assert.match(relayDeploy, /npx wrangler deploy/);
+});
+test("governance exceptions do not require approval reviews", () => {
+  const provenance = readFileSync(provenanceScriptPath, "utf8");
+
+  assert.doesNotMatch(provenance, /pulls\/\$\{pullRequest\}\/reviews/);
+  assert.doesNotMatch(provenance, /effective human approval/);
 });
 
 test("focused contracts stay inside existing required checks", () => {
