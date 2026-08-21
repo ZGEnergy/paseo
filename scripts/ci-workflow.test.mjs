@@ -10,6 +10,7 @@ const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const upstreamSyncWorkflowPath = new URL(".github/workflows/upstream-sync.yml", repoRoot);
 const relayDeployWorkflowPath = new URL(".github/workflows/deploy-relay.yml", repoRoot);
 const provenanceScriptPath = new URL("scripts/check-upstream-provenance.mjs", repoRoot);
+const provenanceWorkflowPath = new URL(".github/workflows/upstream-provenance.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -123,6 +124,7 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
 });
+
 test("governance exceptions do not require human approval", () => {
   const provenance = readFileSync(provenanceScriptPath, "utf8");
 
@@ -131,6 +133,19 @@ test("governance exceptions do not require human approval", () => {
     provenance,
     /Downstream exception requires a non-author human approval of the current pull request head/,
   );
+});
+
+test("provenance closed events require a merge and CI covers internal release pushes", () => {
+  const provenanceWorkflow = readFileSync(provenanceWorkflowPath, "utf8");
+  const ciWorkflow = readFileSync(ciWorkflowPath, "utf8");
+
+  assert.match(
+    provenanceWorkflow,
+    /types: \[opened, edited, reopened, synchronize, ready_for_review, closed\]/,
+  );
+  assert.match(provenanceWorkflow, /github\.event\.action != 'closed'/);
+  assert.match(provenanceWorkflow, /github\.event\.pull_request\.merged == true/);
+  assert.match(ciWorkflow, /push:\s+branches: \[main, internal\/main\]/);
 });
 
 test("focused contracts stay inside existing required checks", () => {
