@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -20,10 +20,23 @@ function lastToolCallStatus(omp: OmpHarness, callId: string): string | undefined
   return last?.type === "tool_call" ? last.status : undefined;
 }
 
+// Every ManualIdleScheduler registers here so a poll after the gate was
+// abandoned fails the test that caused it. Throwing cannot: the gate's promise
+// is consumed by a `.catch()` at the agent_end call site, so a throw would stop
+// the runaway loop silently and the test would still pass.
+const manualIdleSchedulers: ManualIdleScheduler[] = [];
+
+afterEach(() => {
+  const violations = manualIdleSchedulers.flatMap((scheduler) => scheduler.violations());
+  manualIdleSchedulers.length = 0;
+  expect(violations).toEqual([]);
+});
+
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
   private readonly seen: OmpProviderIdleAttempt[] = [];
+  private readonly abandonedPolls: string[] = [];
   private waitCount = 0;
   private abandoned = false;
 
@@ -31,9 +44,20 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
     private readonly decide: (attempt: OmpProviderIdleAttempt) => OmpProviderIdleDecision = () => ({
       retry: true,
     }),
-  ) {}
+  ) {
+    manualIdleSchedulers.push(this);
+  }
 
   waitForRetry(attempt: OmpProviderIdleAttempt): Promise<OmpProviderIdleDecision> {
+    if (this.abandoned) {
+      // Recorded, not thrown, and counted before waitCount moves: a violating
+      // poll must not satisfy a waitForWaits() a test is blocked on. Denying
+      // again stops the loop instead of spinning with no timer.
+      this.abandonedPolls.push(
+        `OMP polled again after the idle scheduler abandoned the gate (attempt ${attempt.attempt})`,
+      );
+      return Promise.resolve({ retry: false, reason: "wait_budget" });
+    }
     this.waitCount += 1;
     this.seen.push(attempt);
     for (const waiter of this.waiters.splice(0)) {
@@ -41,16 +65,15 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
       else this.waiters.push(waiter);
     }
     const decision = this.decide(attempt);
-    if (this.abandoned) {
-      // Without this the caller spins with no timer and exhausts memory before
-      // the test reports anything.
-      throw new Error("OMP kept polling after the idle scheduler abandoned the gate");
-    }
     if (!decision.retry) {
       this.abandoned = true;
       return Promise.resolve(decision);
     }
     return new Promise((resolve) => this.retries.push(() => resolve(decision)));
+  }
+
+  violations(): string[] {
+    return this.abandonedPolls;
   }
 
   attempts(): OmpProviderIdleAttempt[] {
