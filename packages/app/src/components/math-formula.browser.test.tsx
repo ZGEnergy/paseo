@@ -3,6 +3,8 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MathFormula } from "./math-formula.web";
 
+const THEMED_TEXT_STYLE = { color: "rgb(250, 250, 250)" };
+
 afterEach(cleanup);
 
 describe("MathFormula", () => {
@@ -29,6 +31,33 @@ describe("MathFormula", () => {
     expect(container.querySelector("mfrac")).not.toBeNull();
     expect(container.querySelector("annotation")?.textContent).not.toContain("\\displaystyle");
     expect(container.querySelector(".frac-line")).not.toBeNull();
+  });
+
+  it("applies the themed text color to inline and display formulas", () => {
+    const inline = render(
+      <MathFormula
+        expression="E = mc^2"
+        source="$E = mc^2$"
+        displayMode={false}
+        textStyle={THEMED_TEXT_STYLE}
+      />,
+    );
+    const inlineFormula = inline.container.querySelector<HTMLElement>(".katex");
+    expect(inlineFormula).not.toBeNull();
+    expect(getComputedStyle(inlineFormula as HTMLElement).color).toBe("rgb(250, 250, 250)");
+    cleanup();
+
+    const display = render(
+      <MathFormula
+        expression="E = mc^2"
+        source="$$E = mc^2$$"
+        displayMode
+        textStyle={THEMED_TEXT_STYLE}
+      />,
+    );
+    const displayFormula = display.container.querySelector<HTMLElement>(".katex");
+    expect(displayFormula).not.toBeNull();
+    expect(getComputedStyle(displayFormula as HTMLElement).color).toBe("rgb(250, 250, 250)");
   });
 
   it("keeps invalid LaTeX visible instead of throwing", () => {
