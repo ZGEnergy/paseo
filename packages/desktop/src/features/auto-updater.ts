@@ -191,6 +191,13 @@ const appUpdateService = createAppUpdateService({
 // Public API
 // ---------------------------------------------------------------------------
 
+// The packaged app-update.yml points at getpaseo/paseo, so an enabled updater
+// replaces this fork's build with an upstream release. Set the env var to run
+// the real updater against a feed this fork actually publishes.
+function isAutoUpdateEnabled(): boolean {
+  return process.env.PASEO_FORK_ENABLE_AUTO_UPDATE === "1";
+}
+
 export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
@@ -200,6 +207,17 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
+  if (!isAutoUpdateEnabled()) {
+    return {
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion,
+      latestVersion: currentVersion,
+      body: null,
+      date: null,
+      errorMessage: null,
+    };
+  }
   return appUpdateService.checkForAppUpdate({ currentVersion, releaseChannel, intent });
 }
 
@@ -213,6 +231,13 @@ export async function downloadAndInstallUpdate(
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
+  if (!isAutoUpdateEnabled()) {
+    return {
+      installed: false,
+      version: currentVersion,
+      message: "Auto-update is disabled in this build.",
+    };
+  }
   return appUpdateService.downloadAndInstallUpdate(
     { currentVersion, releaseChannel },
     onBeforeQuit,
@@ -228,6 +253,10 @@ export async function installAppUpdateOnQuit({
   releaseChannel: AppReleaseChannel;
   signal: AbortSignal;
 }): Promise<boolean> {
+  if (!isAutoUpdateEnabled()) {
+    return false;
+  }
+
   if (
     !shouldInstallAppUpdateOnQuit({
       platform: process.platform,

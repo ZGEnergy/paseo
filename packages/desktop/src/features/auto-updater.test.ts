@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { UUID } from "builder-util-runtime";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { autoUpdaterMock } = vi.hoisted(() => {
   const handlers = new Map<string, (value: unknown) => void>();
@@ -46,6 +46,35 @@ import {
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
+  beforeEach(() => {
+    process.env.PASEO_FORK_ENABLE_AUTO_UPDATE = "1";
+  });
+
+  afterEach(() => {
+    delete process.env.PASEO_FORK_ENABLE_AUTO_UPDATE;
+  });
+
+  it("reports no update without reaching the updater when auto-update is disabled", async () => {
+    delete process.env.PASEO_FORK_ENABLE_AUTO_UPDATE;
+
+    const result = await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "beta",
+      intent: "automatic",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
+  });
+
   it("treats an unpublished channel manifest as an unavailable update", async () => {
     const error = Object.assign(new Error("Cannot find latest-mac.yml"), {
       code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
