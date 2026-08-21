@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${PASEO_AGENT_ID//[[:space:]]}" || -n "${PASEO_WORKSPACE_ID//[[:space:]]}" ]]; then
+agent_id=${PASEO_AGENT_ID-}
+workspace_id=${PASEO_WORKSPACE_ID-}
+if [[ -n "${agent_id//[[:space:]]}" || -n "${workspace_id//[[:space:]]}" ]]; then
   echo "upgrade must run from a host shell, not a Paseo agent or workspace terminal" >&2
   exit 1
 fi
