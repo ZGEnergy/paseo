@@ -94,7 +94,7 @@ jobs:
           const failed = [];
           const pending = [];
           const terminalSuccess = new Set(["SUCCESS", "SKIPPED"]);
-          const waiting = new Set(["PENDING", "EXPECTED"]);
+          const waiting = new Set(["PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS"]);
 
           if (ciChecks.length === 0) pending.push("CI");
           for (const check of ciChecks) {
