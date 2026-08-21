@@ -211,4 +211,36 @@ describe("local daemon launch supervision", () => {
     expect(state.relayUseTls).toBe(false);
     expect(state.relayPublicUseTls).toBe(true);
   });
+  test("detached CLI start emits lifecycle owner, descriptor, revision, and closure root", async () => {
+    vi.useFakeTimers();
+    const runtime = new FakeDaemonRuntime();
+    const resultPromise = startLocalDaemonDetached(
+      {
+        home: "/tmp/paseo-test",
+        listen: "127.0.0.1:6769",
+        relay: false,
+        mcp: false,
+        injectMcp: true,
+        webUi: true,
+        hostnames: "localhost,.example.com",
+        sourceRevision: "rev-test",
+        closureRoot: "/nix/store/paseo-test",
+      },
+      runtime,
+    );
+    await vi.advanceTimersByTimeAsync(1200);
+    await resultPromise;
+    const env = runtime.recordedLaunches[0]?.options?.env;
+    expect(env?.PASEO_LIFECYCLE_MANAGER).toBe("cli");
+    expect(env?.PASEO_LIFECYCLE_SOURCE_REVISION).toBe("rev-test");
+    expect(env?.PASEO_LIFECYCLE_CLOSURE_ROOT).toBe("/nix/store/paseo-test");
+    expect(JSON.parse(env?.PASEO_LIFECYCLE_DESCRIPTOR ?? "{}")).toMatchObject({
+      listen: "127.0.0.1:6769",
+      relayEnabled: false,
+      mcpEnabled: false,
+      mcpInjectIntoAgents: true,
+      webUiEnabled: true,
+      hostnames: ["localhost", ".example.com"],
+    });
+  });
 });

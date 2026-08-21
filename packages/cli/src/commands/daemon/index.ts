@@ -6,9 +6,9 @@ import { runRestartCommand } from "./restart.js";
 import { runSetPasswordCommand } from "./set-password.js";
 import { pairCommand } from "./pair.js";
 import { runDaemonReloadCommand } from "./reload.js";
+import { upgradeLocalCommand, bootstrapUpgradeCommand } from "./upgrade.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions, addJsonOption } from "../../utils/command-options.js";
-
 function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
   if (typeof hostnames === "string") return hostnames;
   if (typeof allowedHosts === "string") return allowedHosts;
@@ -19,6 +19,8 @@ export function createDaemonCommand(): Command {
   const daemon = new Command("daemon").description("Manage the Paseo daemon");
 
   daemon.addCommand(startCommand());
+  daemon.addCommand(upgradeLocalCommand());
+  daemon.addCommand(bootstrapUpgradeCommand());
   daemon.addCommand(pairCommand());
 
   addJsonAndDaemonHostOptions(

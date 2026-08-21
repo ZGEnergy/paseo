@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+checkout=${PASEO_SOURCE_CHECKOUT_PATH:-$(git rev-parse --show-toplevel)}
+if [[ "$(git -C "$checkout" branch --show-current)" != "internal/main" ]]; then
+  echo "upgrade requires a checkout on internal/main" >&2
+  exit 1
+fi
+if [[ -n "$(git -C "$checkout" status --porcelain)" ]]; then
+  echo "upgrade requires a clean internal/main checkout" >&2
+  exit 1
+fi
+if ! command -v nix >/dev/null 2>&1; then
+  echo "upgrade requires Nix; refusing to install it" >&2
+  exit 1
+fi
+
+revision=$(git -C "$checkout" rev-parse HEAD)
+stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/paseo-upgrade.XXXXXX")
+cleanup() {
+  rm -rf "$stage_dir"
+}
+trap cleanup EXIT
+
+closure_root=$(nix build "$checkout#paseo" --no-link --print-out-paths | awk 'NF { value=$NF } END { print value }')
+if [[ -z "$closure_root" || "$closure_root" != /* || ! -x "$closure_root/bin/paseo" ]]; then
+  echo "Nix build did not produce an executable Paseo closure" >&2
+  exit 1
+fi
+
+PASEO_SOURCE_REVISION="$revision" \
+PASEO_CLOSURE_ROOT="$closure_root" \
+"$closure_root/bin/paseo" daemon upgrade-local \
+  --checkout "$checkout" \
+  --revision "$revision" \
+  --staged-root "$closure_root" \
+  "$@"
+
+launcher_dir=${XDG_BIN_HOME:-${HOME:?HOME is required}/.local/bin}
+case ":${PATH:-}:" in
+  *:"$launcher_dir":*) ;;
+  *) echo "warning: $launcher_dir is not first on PATH; stable paseo launcher may not be selected" >&2 ;;
+esac

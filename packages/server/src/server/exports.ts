@@ -55,6 +55,20 @@ export {
 } from "./agent/provider-launch-config.js";
 export { findExecutable } from "../executable-resolution/executable-resolution.js";
 export { execCommand, spawnProcess } from "../utils/spawn.js";
+export {
+  acquirePidLock,
+  cliLaunchDescriptorSchema,
+  getPidLockInfo,
+  isAttestedCliLifecycle,
+  parsePidLifecycleEnvironment,
+  releasePidLock,
+  updatePidLock,
+  type AcquirePidLockOptions,
+  type CliLaunchDescriptor,
+  type PidLifecycle,
+  type PidLockInfo,
+  type UpdatePidLockPatch,
+} from "./pid-lock.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {

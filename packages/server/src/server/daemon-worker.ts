@@ -6,8 +6,7 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
-
-process.title = "Paseo Daemon";
+import { getOrCreateServerId } from "./server-id.js";
 
 type SupervisorLifecycleMessage =
   | {
@@ -17,6 +16,7 @@ type SupervisorLifecycleMessage =
   | {
       type: "paseo:ready";
       listen: string;
+      serverId: string;
     }
   | {
       type: "paseo:restart";
@@ -328,7 +328,11 @@ async function main() {
     if (!listen) {
       throw new Error("Daemon did not expose a listen target after startup");
     }
-    sendSupervisorLifecycleMessage({ type: "paseo:ready", listen });
+    sendSupervisorLifecycleMessage({
+      type: "paseo:ready",
+      listen,
+      serverId: getOrCreateServerId(paseoHome, { logger }),
+    });
   } catch (err) {
     logger.fatal({ err }, "Daemon failed to start listening");
     throw err;

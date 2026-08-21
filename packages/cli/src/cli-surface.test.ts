@@ -22,6 +22,16 @@ describe("canonical CLI surface", () => {
     expect(nestedReload?.helpInformation()).toContain("--host <host>");
     expect(nestedReload?.helpInformation()).toContain("--json");
   });
+  it("registers local upgrade and explicit bootstrap commands", () => {
+    const daemon = createCli().commands.find((command) => command.name() === "daemon");
+    const upgrade = daemon?.commands.find((command) => command.name() === "upgrade-local");
+    const bootstrap = daemon?.commands.find((command) => command.name() === "bootstrap-upgrade");
+    expect(upgrade?.helpInformation()).toContain("--staged-root <path>");
+    expect(upgrade?.helpInformation()).toContain("--timeout <seconds>");
+    expect(bootstrap?.helpInformation()).toContain("--listen <listen>");
+    expect(bootstrap?.helpInformation()).toContain("--relay <true|false>");
+    expect(bootstrap?.helpInformation()).toContain("--hostnames <hosts>");
+  });
 
   it("names explicit workspace creation without exposing older syntax", () => {
     const run = createCli().commands.find((command) => command.name() === "run");

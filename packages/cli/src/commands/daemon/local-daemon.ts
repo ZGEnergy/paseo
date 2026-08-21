@@ -2,7 +2,12 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import {
+  loadConfig,
+  resolvePaseoHome,
+  spawnProcess,
+  type CliLaunchDescriptor,
+} from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -17,6 +22,8 @@ export interface DaemonStartOptions {
   injectMcp?: boolean;
   webUi?: boolean;
   hostnames?: string;
+  sourceRevision?: string;
+  closureRoot?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -26,6 +33,14 @@ export interface LocalDaemonPidInfo {
   uid?: number;
   listen?: string;
   desktopManaged?: boolean;
+  lifecycle?: {
+    version: 1;
+    manager: "cli" | "desktop" | "system" | "unknown";
+    descriptor?: CliLaunchDescriptor;
+    sourceRevision?: string;
+    closureRoot?: string;
+    serverId?: string;
+  };
 }
 
 export interface LocalDaemonState {
@@ -154,28 +169,58 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   return args;
 }
 
-function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (options.home) {
-    childEnv.PASEO_HOME = options.home;
-  }
+function applyLaunchEnvironment(options: DaemonStartOptions, childEnv: NodeJS.ProcessEnv): void {
+  if (options.home) childEnv.PASEO_HOME = options.home;
   if (options.listen) {
     childEnv.PASEO_LISTEN = options.listen;
   } else if (options.port) {
     childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.hostnames) {
-    childEnv.PASEO_HOSTNAMES = options.hostnames;
-  }
-  if (options.relayUseTls === true) {
-    childEnv.PASEO_RELAY_USE_TLS = "true";
-  }
-  if (options.webUi === true) {
-    childEnv.PASEO_WEB_UI_ENABLED = "true";
-  }
-  if (options.webUi === false) {
-    childEnv.PASEO_WEB_UI_ENABLED = "false";
-  }
+  if (options.hostnames) childEnv.PASEO_HOSTNAMES = options.hostnames;
+  if (options.relayUseTls === true) childEnv.PASEO_RELAY_USE_TLS = "true";
+  if (options.webUi !== undefined) childEnv.PASEO_WEB_UI_ENABLED = String(options.webUi);
+}
+
+function resolveLaunchHostnames(
+  raw: string | undefined,
+  configured: CliLaunchDescriptor["hostnames"],
+): CliLaunchDescriptor["hostnames"] {
+  const hostnames = raw?.trim();
+  if (!hostnames) return configured ?? null;
+  if (hostnames.toLowerCase() === "true") return true;
+  return hostnames
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function buildLaunchDescriptor(
+  options: DaemonStartOptions,
+  config: ReturnType<typeof loadConfig>,
+): CliLaunchDescriptor {
+  return {
+    listen: config.listen,
+    relayEnabled: options.relay ?? config.relayEnabled ?? true,
+    relayUseTls: options.relayUseTls ?? config.relayUseTls ?? false,
+    mcpEnabled: options.mcp ?? config.mcpEnabled ?? true,
+    mcpInjectIntoAgents: options.injectMcp ?? config.mcpInjectIntoAgents ?? false,
+    webUiEnabled: options.webUi ?? config.webUi?.enabled ?? false,
+    hostnames: resolveLaunchHostnames(options.hostnames, config.hostnames ?? null),
+  };
+}
+
+function buildChildEnv(options: DaemonStartOptions, runnerEntry: string): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  applyLaunchEnvironment(options, childEnv);
+  const paseoHome = resolvePaseoHome(childEnv);
+  const config = loadConfig(paseoHome, { env: childEnv });
+  const descriptor = buildLaunchDescriptor(options, config);
+  childEnv.PASEO_LIFECYCLE_MANAGER = "cli";
+  childEnv.PASEO_LIFECYCLE_DESCRIPTOR = JSON.stringify(descriptor);
+  childEnv.PASEO_LIFECYCLE_SOURCE_REVISION =
+    options.sourceRevision ?? childEnv.PASEO_SOURCE_REVISION ?? "local";
+  childEnv.PASEO_LIFECYCLE_CLOSURE_ROOT =
+    options.closureRoot ?? childEnv.PASEO_CLOSURE_ROOT ?? path.dirname(runnerEntry);
   return childEnv;
 }
 
@@ -252,6 +297,11 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       return null;
     }
 
+    const rawLifecycle = parsed.lifecycle;
+    const lifecycle =
+      typeof rawLifecycle === "object" && rawLifecycle !== null
+        ? (rawLifecycle as LocalDaemonPidInfo["lifecycle"])
+        : undefined;
     return {
       pid: pidValue,
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
@@ -259,6 +309,7 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
       listen: resolveListenField(parsed.listen, parsed.sockPath),
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
+      lifecycle,
     };
   } catch {
     return null;
@@ -583,11 +634,11 @@ export async function startLocalDaemonDetached(
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
-
   const daemonRunnerEntry = runtime.resolveRunnerEntry();
-  const childEnv = buildChildEnv(options);
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
 
   const paseoHome = runtime.resolveHome(childEnv);
+
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
   const child = runtime.spawnDetached(
     process.execPath,
@@ -654,7 +705,7 @@ export function startLocalDaemonForeground(
   }
 
   const daemonRunnerEntry = runtime.resolveRunnerEntry();
-  const childEnv = buildChildEnv(options);
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
   const result = runtime.spawnForeground(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],

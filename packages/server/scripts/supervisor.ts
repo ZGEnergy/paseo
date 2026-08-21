@@ -23,6 +23,7 @@ type WorkerLifecycleMessage =
   | {
       type: "paseo:ready";
       listen: string;
+      serverId: string;
     }
   | {
       type: "paseo:restart";
@@ -45,7 +46,7 @@ interface SupervisorOptions {
     args: string[];
     env?: NodeJS.ProcessEnv;
   } | null;
-  onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
+  onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
@@ -73,10 +74,16 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
   }
   if (type === "paseo:ready") {
     const listen = (msg as { listen?: unknown }).listen;
-    if (typeof listen !== "string" || listen.trim().length === 0) {
+    const serverId = (msg as { serverId?: unknown }).serverId;
+    if (
+      typeof listen !== "string" ||
+      listen.trim().length === 0 ||
+      typeof serverId !== "string" ||
+      serverId.trim().length === 0
+    ) {
       return null;
     }
-    return { type: "paseo:ready", listen };
+    return { type: "paseo:ready", listen, serverId };
   }
   if (type === "paseo:restart") {
     const reason = (msg as { reason?: unknown }).reason;
@@ -273,13 +280,14 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       }
 
       if (lifecycleMessage.type === "paseo:ready") {
-        writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
-        Promise.resolve(options.onWorkerReady?.({ listen: lifecycleMessage.listen })).catch(
-          (error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            log(`Worker ready callback failed: ${message}`);
-          },
-        );
+        writeLifecycleLog("Worker ready", {
+          listen: lifecycleMessage.listen,
+          serverId: lifecycleMessage.serverId,
+        });
+        Promise.resolve(options.onWorkerReady?.(lifecycleMessage)).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          log(`Worker ready callback failed: ${message}`);
+        });
         return;
       }
 

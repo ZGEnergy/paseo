@@ -535,6 +535,48 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
+### Local daemon upgrades
+
+Local daemon upgrades require Nix and a clean checkout on the exact `internal/main` branch. The
+upgrade never installs Nix, mutates a global npm installation, or changes `$PASEO_HOME` data. Only a
+daemon started by the CLI with a live, versioned PID lifecycle record (`manager=cli`) is eligible;
+desktop-managed, system-managed, legacy, unknown, stale, or mismatched records fail closed.
+
+From a clean `internal/main` checkout, run:
+
+```bash
+npm run upgrade:local
+```
+
+The script builds the staged Nix closure first and invokes its absolute `bin/paseo`, so the first
+rollout does not need an existing `releases/current` link or an already-upgraded global CLI. Set
+`PASEO_HOME` to target another state directory. The command records the expected source revision,
+closure root, listen target, and server identity without persisting secrets.
+
+Release closures are retained under
+`${XDG_DATA_HOME:-$HOME/.local/share}/paseo/releases/roots/` as immutable indirect Nix GC roots.
+`current` and `previous` links provide atomic activation and the rollback window; both roots remain
+valid until a later successful upgrade prunes older generations. A stable launcher is installed at
+`${XDG_BIN_HOME:-$HOME/.local/bin}/paseo` through `releases/current/bin/paseo`. The command warns when
+that directory is not first on `PATH`; it never edits `PATH` or npm globals.
+
+Legacy daemons require an explicit bootstrap. Stop the legacy daemon, then provide every effective
+launch value (there is no inherited-environment or process-state inference):
+
+```bash
+paseo daemon bootstrap-upgrade \
+  --listen 127.0.0.1:6767 \
+  --relay false --relay-use-tls false \
+  --mcp true --inject-mcp false --web-ui false \
+  --hostnames localhost
+```
+
+Health acceptance requires a new PID, unchanged server identity and listen target, and lifecycle
+metadata matching the expected source revision and closure root. On failed startup or timeout, the
+new supervisor is stopped and its PID lock/endpoint released before links are restored and the prior
+root is restarted and attested. Clients see only the bounded restart reconnect window; pairing,
+agents, worktrees, and configuration remain in the existing `$PASEO_HOME`.
+
 Use `--host <host:port>` to point the CLI at a different daemon:
 
 ```bash
