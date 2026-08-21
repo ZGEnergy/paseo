@@ -115,4 +115,3 @@ jobs:
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
-          gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$number/merge" -f merge_method=merge >/dev/null

@@ -26,6 +26,7 @@ Internal teammates run `/ship` locally for a pull request that targets `internal
 A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
 
 - `scripts/check-upstream-provenance.mjs`
+- `scripts/ci-workflow.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`
 - `.github/workflows/upstream-sync.yml`
@@ -46,4 +47,4 @@ Required checks are the repository CI workflow and the provenance check for chan
 
 ## Release and relay isolation
 
-This fork must not publish to upstream release destinations. Release workflows may create GitHub-native artifacts only in the repository where they run. Inherited external deployment paths for Cloudflare app and website deployments, Expo Android publishing, and Apple signing/notarization use exact-repository guards (`github.repository == 'ZGEnergy/paseo'`); those guards do not block GitHub-native release artifacts in forks. Relay requires separate repository-level control: each repository owner must disable the inherited relay workflow in repository Actions settings and remove any relay deployment credentials/secrets (or otherwise revoke the deployment environment). The relay implementation and its default endpoint remain unchanged.
+This fork must not publish to upstream release destinations. Release workflows may create GitHub-native artifacts only in the repository where they run. Inherited external deployment paths for Cloudflare app and website deployments, Expo Android publishing, Apple signing/notarization, and relay deployment use exact-repository guards (`github.repository == 'ZGEnergy/paseo'`); those guards do not block GitHub-native release artifacts in forks. The relay implementation and its default endpoint remain unchanged.
