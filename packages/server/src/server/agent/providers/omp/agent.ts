@@ -144,8 +144,10 @@ export interface OmpProviderIdleAttempt {
   attempt: number;
   /** Consecutive `get_state` rejections; any successful response resets it. */
   consecutiveFailures: number;
-  /** Wall-clock time since the gate opened, covering waits and `get_state`. */
+  /** Monotonic time since the gate opened, covering waits and `get_state`. */
   elapsedMs: number;
+  /** Whether the last observed state reported compaction in progress. */
+  isCompacting: boolean;
 }
 
 /**
@@ -212,19 +214,23 @@ interface OmpAgentSessionOptions {
   live?: boolean;
 }
 
+// Autonomous OMP cycles carry no turn ID; they still need a gate key of their own.
+const OMP_AUTONOMOUS_GATE_KEY = "autonomous";
+
 // OMP processes a state request only once its RPC loop is promptable again, so
 // the first checks after agent_end usually miss. Poll fast at first, then back
 // off: a stalled provider otherwise costs 100 RPCs a second for as long as the
 // stall lasts.
-// Autonomous OMP cycles carry no turn ID; they still need a gate key of their own.
-const OMP_AUTONOMOUS_GATE_KEY = "autonomous";
-
 const OMP_PROVIDER_IDLE_MIN_RETRY_MS = 10;
 const OMP_PROVIDER_IDLE_MAX_RETRY_MS = 1_000;
 // Wall clock, not a retry count: each get_state carries the JSONL-RPC request
 // timeout, so counting attempts would let a slow-but-answering state path stretch
 // the wait to tens of minutes.
 const OMP_PROVIDER_IDLE_BUDGET_MS = 60_000;
+// Compaction is a model call over the whole context, so it routinely outlasts the
+// idle budget. Waiting on a reported compaction is not the stall this gate guards
+// against, but it still needs an end.
+const OMP_PROVIDER_COMPACTING_BUDGET_MS = 600_000;
 // A get_state rejection already costs a full RPC timeout, so a few in a row are
 // enough evidence that the state path is gone.
 const OMP_PROVIDER_IDLE_FAILURE_BUDGET = 3;
@@ -236,11 +242,14 @@ function ompProviderIdleRetryDelayMs(attempt: number): number {
 
 export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
-    waitForRetry: async ({ attempt, consecutiveFailures, elapsedMs }) => {
+    waitForRetry: async ({ attempt, consecutiveFailures, elapsedMs, isCompacting }) => {
       if (consecutiveFailures >= OMP_PROVIDER_IDLE_FAILURE_BUDGET) {
         return { retry: false, reason: "failure_budget" };
       }
-      if (elapsedMs >= OMP_PROVIDER_IDLE_BUDGET_MS) {
+      const budgetMs = isCompacting
+        ? OMP_PROVIDER_COMPACTING_BUDGET_MS
+        : OMP_PROVIDER_IDLE_BUDGET_MS;
+      if (elapsedMs >= budgetMs) {
         return { retry: false, reason: "wait_budget" };
       }
       await delay(ompProviderIdleRetryDelayMs(attempt));
@@ -571,6 +580,17 @@ function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
     return null;
   }
   return formatOmpErrorMessage(latestAssistant);
+}
+
+/** Newest agent_end wins, unless it would discard an error the gate already holds. */
+function preferErroredOmpPayload(
+  current: OmpAgentMessage[],
+  incoming: OmpAgentMessage[],
+): OmpAgentMessage[] {
+  if (latestOmpErrorMessage(incoming)) {
+    return incoming;
+  }
+  return latestOmpErrorMessage(current) ? current : incoming;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2255,6 +2275,19 @@ export class OmpAgentSession implements AgentSession {
     void this.refreshAfterTurn(finalUsage);
   }
 
+  /** Ownership can change across an await; completing a turn this gate no longer
+   * represents would clear the turn that replaced it. */
+  private completeTurnIfGateOwned(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    if (!this.ownsProviderIdleGate(turnId)) {
+      return;
+    }
+    this.completeTurn(turnId, messages);
+  }
+
+  private ownsProviderIdleGate(turnId: string | undefined): boolean {
+    return !this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId;
+  }
+
   private async completeTurnAfterProviderIdle(
     turnId: string | undefined,
     messages: OmpAgentMessage[],
@@ -2264,20 +2297,23 @@ export class OmpAgentSession implements AgentSession {
     // cycles carry no turn ID, so they share one key: their loop polls too.
     const key = turnId ?? OMP_AUTONOMOUS_GATE_KEY;
     if (this.providerIdleGate?.key === key) {
-      // The newest agent_end owns the terminal payload; the running loop reads it
-      // at completion time so a late provider error is not dropped.
-      this.providerIdleGate.messages = messages;
+      // The newest agent_end owns the terminal payload so a later provider error
+      // is not dropped, except when it would drop one the gate already holds.
+      this.providerIdleGate.messages = preferErroredOmpPayload(
+        this.providerIdleGate.messages,
+        messages,
+      );
       return;
     }
     const gate = { key, messages };
     this.providerIdleGate = gate;
     try {
-      const startedAt = Date.now();
+      const startedAt = performance.now();
       let attempt = 0;
       let consecutiveFailures = 0;
       let lastState: OmpSessionState | null = null;
       let lastError: unknown = null;
-      while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
+      while (this.ownsProviderIdleGate(turnId)) {
         attempt += 1;
         try {
           const state = await this.runtimeSession.getState();
@@ -2287,7 +2323,7 @@ export class OmpAgentSession implements AgentSession {
           // Parent model idle is not enough: OMP-internal `task` children keep
           // writing after agent_end / isStreaming=false (#2232).
           if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
-            this.completeTurn(turnId, gate.messages);
+            this.completeTurnIfGateOwned(turnId, gate.messages);
             return;
           }
         } catch (error) {
@@ -2301,9 +2337,13 @@ export class OmpAgentSession implements AgentSession {
         const decision = await this.providerIdleScheduler.waitForRetry({
           attempt,
           consecutiveFailures,
-          elapsedMs: Date.now() - startedAt,
+          elapsedMs: performance.now() - startedAt,
+          isCompacting: lastState?.isCompacting === true,
         });
         if (!decision.retry) {
+          if (!this.ownsProviderIdleGate(turnId)) {
+            return;
+          }
           this.failStalledTurn(turnId, {
             reason: decision.reason,
             attempt,
@@ -2344,7 +2384,10 @@ export class OmpAgentSession implements AgentSession {
       lastError: unknown;
     },
   ): void {
-    const stateUnavailable = context.reason === "failure_budget";
+    // A hanging state path burns the wait budget before the failure budget, so a
+    // gate that never saw a state is an unavailable state path whichever ran out.
+    const stateUnavailable =
+      context.reason === "failure_budget" || (!context.lastState && context.lastError !== null);
     // Both observations go into every diagnostic: which budget ran out says what
     // Paseo did, the last state and the last error say what OMP was doing.
     const details = [`state checks: ${context.attempt}`];
@@ -2354,8 +2397,12 @@ export class OmpAgentSession implements AgentSession {
       );
     }
     if (context.lastError) {
+      const failureCount =
+        context.consecutiveFailures > 0
+          ? ` after ${context.consecutiveFailures} consecutive failures`
+          : "";
       details.push(
-        `last get_state error after ${context.consecutiveFailures} consecutive failures: ${toDiagnosticErrorMessage(context.lastError)}`,
+        `last get_state error${failureCount}: ${toDiagnosticErrorMessage(context.lastError)}`,
       );
     }
     const diagnostic = details.join("; ");
