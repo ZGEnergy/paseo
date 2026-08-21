@@ -676,7 +676,7 @@ describe("OMP agent client and session", () => {
     await delay(5);
     scheduler.retryAll();
     await scheduler.waitForWaits(2);
-    expect(scheduler.attempts()[1]?.elapsedMs).toBeGreaterThan(0);
+    expect(scheduler.attempts()[1]?.elapsedMs).toBeGreaterThanOrEqual(5);
   });
 
   test("keeps an earlier agent_end error when a later cycle reports none", async () => {
@@ -717,7 +717,7 @@ describe("OMP agent client and session", () => {
 
     await expect(completion).rejects.toThrow(/state/i);
     expect(omp.failedTurns()).toMatchObject([{ code: "omp_provider_state_unavailable" }]);
-    expect(omp.failedTurns()[0]?.diagnostic).not.toContain("after 0 consecutive failures");
+    expect(omp.failedTurns()[0]?.diagnostic).toContain("2 consecutive failures");
   });
 
   // #2232: parent model loop can go idle while OMP-internal `task` children
@@ -1063,11 +1063,63 @@ describe("OMP agent client and session", () => {
     const omp = new OmpHarness({ providerIdleScheduler: scheduler });
     await omp.start();
 
+    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(true);
+
+    // A snapshot that cannot be fetched is not evidence that work continues.
+    omp.failSubagentSnapshots(new Error("subagents unavailable"));
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.isWaitingOnSubagents).toBe(false);
+    void completion;
+  });
+
+  test("does not spend the idle budget on time OMP was demonstrably working", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(true);
+
+    // Five minutes of fan-out, then the children finish and the parent model
+    // picks their results back up.
+    clock += 300_000;
+    omp.reportSubagentSnapshots([]);
+    omp.reportProviderState({ isStreaming: true, isCompacting: false });
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+
+    // The budget must measure the stall, not the work that preceded it.
+    expect(scheduler.attempts()[1]?.elapsedMs).toBeLessThan(60_000);
+    expect(omp.failedTurns()).toEqual([]);
+    void completion;
+  });
+
+  test("does not treat an unconfirmed subagent as evidence OMP is working", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
     await omp.requireStartTurn("fan out");
     const runtime = omp.runtime();
     runtime.beginTurn();
     runtime.acceptPrompt("fan out", "user-fan");
     runtime.streamAssistantText("dispatching");
+    // A lifecycle child that no get_subagents reply ever lists: the index keeps
+    // it running, but OMP has never confirmed it.
     runtime.emit({
       type: "subagent_lifecycle",
       payload: { id: "child-1", agent: "worker", status: "started", index: 0 },
@@ -1076,13 +1128,77 @@ describe("OMP agent client and session", () => {
     runtime.finishTurn();
 
     await scheduler.waitForWaits(1);
+    expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(false);
+    clock += 90_000;
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.elapsedMs).toBeGreaterThanOrEqual(90_000);
+  });
+
+  test("stops reporting a subagent wait once get_state fails", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
     expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(true);
 
-    // A snapshot that cannot be fetched is not evidence that work continues.
-    runtime.getSubagentsError = new Error("subagents unavailable");
+    omp.failProviderStateChecks(new Error("state unavailable"));
     scheduler.retryAll();
     await scheduler.waitForWaits(2);
     expect(scheduler.attempts()[1]?.isWaitingOnSubagents).toBe(false);
+    void completion;
+  });
+
+  test("names unconfirmed subagents when the gate gives up waiting on them", async () => {
+    const scheduler = new ManualIdleScheduler((attempt) =>
+      attempt.attempt < 2 ? { retry: true } : { retry: false, reason: "wait_budget" },
+    );
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    // The snapshot path goes down while the index still holds a running child.
+    omp.failSubagentSnapshots(new Error("subagents unavailable"));
+    scheduler.retryAll();
+
+    await expect(completion).rejects.toThrow(/subagent/i);
+    expect(omp.failedTurns()[0]?.diagnostic).toContain("running subagents");
+  });
+
+  test("does not claim consecutive failures when the last state check succeeded", async () => {
+    const scheduler = new ManualIdleScheduler((attempt) =>
+      attempt.attempt < 3 ? { retry: true } : { retry: false, reason: "wait_budget" },
+    );
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+    omp.failProviderStateChecks(new Error("state unavailable"));
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    omp.failProviderStateChecks(null);
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    scheduler.retryAll();
+
+    await expect(completion).rejects.toThrow();
+    const diagnostic = omp.failedTurns()[0]?.diagnostic ?? "";
+    expect(diagnostic).toContain("state unavailable");
+    expect(diagnostic).not.toContain("consecutive failures");
   });
 
   test("does not complete on OMP's extension-notice agent_end", async () => {
