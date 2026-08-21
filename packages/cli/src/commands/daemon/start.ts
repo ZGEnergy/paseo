@@ -20,13 +20,24 @@ export function startCommand(): Command {
     .option("--port <port>", "Port to listen on (default: 6767)")
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .option("--foreground", "Run in foreground (don't daemonize)")
-    .option("--relay", "Enable relay connection")
-    .option("--no-relay", "Disable relay connection")
+    .addOption(new Option("--relay", "Enable relay connection").default(undefined))
+    .addOption(new Option("--no-relay", "Disable relay connection").default(undefined))
     .option("--relay-use-tls", "Use wss:// for the relay connection and pairing offers")
-    .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
-    .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
-    .option("--web-ui", "Enable the bundled daemon web UI")
-    .option("--no-web-ui", "Disable the bundled daemon web UI")
+    .addOption(new Option("--mcp", "Enable the Agent MCP HTTP endpoint").default(undefined))
+    .addOption(new Option("--no-mcp", "Disable the Agent MCP HTTP endpoint").default(undefined))
+    .addOption(
+      new Option("--inject-mcp", "Enable auto-injecting the Paseo MCP into created agents").default(
+        undefined,
+      ),
+    )
+    .addOption(
+      new Option(
+        "--no-inject-mcp",
+        "Disable auto-injecting the Paseo MCP into created agents",
+      ).default(undefined),
+    )
+    .addOption(new Option("--web-ui", "Enable the bundled daemon web UI").default(undefined))
+    .addOption(new Option("--no-web-ui", "Disable the bundled daemon web UI").default(undefined))
     .option(
       "--hostnames <hosts>",
       'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',

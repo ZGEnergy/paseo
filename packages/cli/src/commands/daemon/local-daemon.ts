@@ -153,8 +153,14 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
     args.push("--relay-use-tls");
   }
 
+  if (options.mcp === true) {
+    args.push("--mcp");
+  }
   if (options.mcp === false) {
     args.push("--no-mcp");
+  }
+  if (options.injectMcp === true) {
+    args.push("--inject-mcp");
   }
   if (options.injectMcp === false) {
     args.push("--no-inject-mcp");
@@ -198,6 +204,14 @@ function buildLaunchDescriptor(
   options: DaemonStartOptions,
   config: ReturnType<typeof loadConfig>,
 ): CliLaunchDescriptor {
+  const launchOwned = {
+    ...(options.relay !== undefined ? { relayEnabled: true } : {}),
+    ...(options.relayUseTls !== undefined ? { relayUseTls: true } : {}),
+    ...(options.mcp !== undefined ? { mcpEnabled: true } : {}),
+    ...(options.injectMcp !== undefined ? { mcpInjectIntoAgents: true } : {}),
+    ...(options.webUi !== undefined ? { webUiEnabled: true } : {}),
+    ...(options.hostnames !== undefined ? { hostnames: true } : {}),
+  };
   return {
     listen: config.listen,
     relayEnabled: options.relay ?? config.relayEnabled ?? true,
@@ -206,6 +220,7 @@ function buildLaunchDescriptor(
     mcpInjectIntoAgents: options.injectMcp ?? config.mcpInjectIntoAgents ?? false,
     webUiEnabled: options.webUi ?? config.webUi?.enabled ?? false,
     hostnames: resolveLaunchHostnames(options.hostnames, config.hostnames ?? null),
+    ...(Object.keys(launchOwned).length > 0 ? { launchOwned } : {}),
   };
 }
 

@@ -11,6 +11,7 @@ import {
   startLocalDaemonDetached,
   startLocalDaemonForeground,
 } from "./local-daemon.js";
+import { startCommand } from "./start.js";
 
 type RecordedDaemonLaunch =
   | {
@@ -89,6 +90,16 @@ function expectSupervisorLaunch(argv: string[]): void {
 }
 
 describe("local daemon launch supervision", () => {
+  test("daemon start registers positive and negative replay flags without defaults", () => {
+    const options = startCommand().options;
+    const flags = options.map((option) => option.long);
+    expect(flags).toEqual(
+      expect.arrayContaining(["--mcp", "--no-mcp", "--inject-mcp", "--no-inject-mcp"]),
+    );
+    for (const flag of ["--mcp", "--no-mcp", "--inject-mcp", "--no-inject-mcp"]) {
+      expect(options.find((option) => option.long === flag)?.defaultValue).toBeUndefined();
+    }
+  });
   beforeEach(() => {
     vi.useRealTimers();
   });
@@ -133,6 +144,40 @@ describe("local daemon launch supervision", () => {
     expect(launch?.command).toBe(process.execPath);
     expectSupervisorLaunch(launch?.args ?? []);
     expect(launch?.args).toContain("--no-mcp");
+  });
+  test("positive MCP flags are passed to the supervised daemon", () => {
+    const runtime = new FakeDaemonRuntime();
+
+    startLocalDaemonForeground({ home: "/tmp/paseo-test", mcp: true, injectMcp: true }, runtime);
+
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.args).toContain("--mcp");
+    expect(launch?.args).toContain("--inject-mcp");
+  });
+
+  test("omitted MCP flags preserve false persisted settings in lifecycle descriptor", async () => {
+    vi.useFakeTimers();
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        relay: { enabled: false },
+        mcp: { enabled: false, injectIntoAgents: false },
+      },
+      features: { webUi: { enabled: false } },
+    });
+    const runtime = new FakeDaemonRuntime();
+    const resultPromise = startLocalDaemonDetached({ home }, runtime);
+    await vi.advanceTimersByTimeAsync(1200);
+    await resultPromise;
+
+    const descriptor = JSON.parse(
+      runtime.recordedLaunches[0]?.options?.env?.PASEO_LIFECYCLE_DESCRIPTOR ?? "{}",
+    );
+    expect(descriptor.mcpEnabled).toBe(false);
+    expect(descriptor.mcpInjectIntoAgents).toBe(false);
+    expect(descriptor.relayEnabled).toBe(false);
+    expect(descriptor.webUiEnabled).toBe(false);
+    expect(descriptor.launchOwned).toBeUndefined();
   });
 
   test("relay TLS flag is passed to the supervised daemon", async () => {
@@ -241,6 +286,13 @@ describe("local daemon launch supervision", () => {
       mcpInjectIntoAgents: true,
       webUiEnabled: true,
       hostnames: ["localhost", ".example.com"],
+    });
+    expect(JSON.parse(env?.PASEO_LIFECYCLE_DESCRIPTOR ?? "{}").launchOwned).toEqual({
+      relayEnabled: true,
+      mcpEnabled: true,
+      mcpInjectIntoAgents: true,
+      webUiEnabled: true,
+      hostnames: true,
     });
   });
 });

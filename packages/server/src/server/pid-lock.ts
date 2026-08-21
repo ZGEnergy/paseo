@@ -13,6 +13,16 @@ export const cliLaunchDescriptorSchema = z.object({
   mcpInjectIntoAgents: z.boolean(),
   webUiEnabled: z.boolean(),
   hostnames: z.union([z.literal(true), z.array(z.string()), z.null()]),
+  launchOwned: z
+    .object({
+      relayEnabled: z.boolean().optional(),
+      relayUseTls: z.boolean().optional(),
+      mcpEnabled: z.boolean().optional(),
+      mcpInjectIntoAgents: z.boolean().optional(),
+      webUiEnabled: z.boolean().optional(),
+      hostnames: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type CliLaunchDescriptor = z.infer<typeof cliLaunchDescriptorSchema>;

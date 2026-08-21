@@ -1,7 +1,9 @@
+import { constants as fsConstants } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import {
   access,
   mkdir,
+  readFile,
   readlink,
   readdir,
   rename,
@@ -16,6 +18,7 @@ import {
   cliLaunchDescriptorSchema,
   getPidLockInfo,
   isAttestedCliLifecycle,
+  loadConfig,
   type CliLaunchDescriptor,
   type PidLifecycle,
   type PidLockInfo,
@@ -61,6 +64,12 @@ export interface UpgradeNixDependencies {
   addIndirectRoot(input: { rootPath: string; closureRoot: string }): Promise<void>;
 }
 
+export interface UpgradeDaemonStartResult {
+  pid: number | null;
+  logPath: string | null;
+  cleanup?: () => Promise<void>;
+}
+
 export interface UpgradeDaemonDependencies {
   readPidLock(home: string): Promise<PidLockInfo | null>;
   stop(
@@ -73,7 +82,7 @@ export interface UpgradeDaemonDependencies {
     descriptor: CliLaunchDescriptor;
     sourceRevision: string;
     closureRoot: string;
-  }): Promise<{ pid: number | null; logPath: string | null }>;
+  }): Promise<UpgradeDaemonStartResult>;
   probe(input: { home: string; timeoutMs: number }): Promise<UpgradeAttestation | null>;
   isPidRunning(pid: number): boolean;
 }
@@ -87,6 +96,7 @@ export interface UpgradeFilesystemDependencies {
   rm(path: string, options?: { force?: boolean; recursive?: boolean }): Promise<void>;
   readdir(path: string): Promise<string[]>;
   access(path: string): Promise<void>;
+  readFile?(path: string): Promise<string>;
   writeFile(path: string, data: string, options?: { flag?: string }): Promise<void>;
 }
 
@@ -145,7 +155,8 @@ const defaultFs: UpgradeFilesystemDependencies = {
   unlink,
   rm,
   readdir: async (value) => (await readdir(value)).map(String),
-  access,
+  access: async (value) => access(value, fsConstants.X_OK),
+  readFile: async (value) => readFile(value, "utf8"),
   writeFile,
 };
 
@@ -153,10 +164,10 @@ const defaultNix: UpgradeNixDependencies = {
   async ensureAvailable() {
     await execFileAsync("nix", ["--version"]);
   },
-  async build({ checkout }) {
+  async build({ checkout, revision }) {
     const result = await execFileAsync("nix", [
       "build",
-      `${checkout}#paseo`,
+      `git+file://${checkout}?rev=${revision}#paseo`,
       "--no-link",
       "--print-out-paths",
     ]);
@@ -220,10 +231,28 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
         env,
         stdio: ["ignore", "ignore", "ignore"],
       });
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = () => resolve();
+        const onError = (error: Error) => reject(error);
+        child.once("spawn", onSpawn);
+        child.once("error", onError);
+      });
       child.unref();
+      const cleanup = async (): Promise<void> => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.kill("SIGTERM");
+        await Promise.race([
+          new Promise<void>((resolve) => child.once("exit", () => resolve())),
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 1000);
+            timer.unref();
+          }),
+        ]);
+      };
       return {
         pid: child.pid ?? null,
         logPath: path.join(input.home, "daemon.log"),
+        cleanup,
       };
     },
     async probe({ home, timeoutMs }) {
@@ -238,9 +267,12 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
           !lock ||
           !lifecycle ||
           lifecycle.manager !== "cli" ||
+          !lifecycle.descriptor ||
           !status.serverId ||
           lifecycle.serverId !== status.serverId ||
-          !status.listen
+          !status.listen ||
+          status.listen !== lifecycle.descriptor.listen ||
+          (lock.listen !== null && lock.listen !== status.listen)
         )
           return null;
         return {
@@ -312,7 +344,12 @@ async function readLinkOrNull(
 ): Promise<string | null> {
   try {
     return await fs.readlink(link);
-  } catch {
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code !== undefined && code !== "ENOENT") throw error;
     return null;
   }
 }
@@ -333,22 +370,55 @@ async function replaceLink(
   }
 }
 
+function parseUpgradeLockOwnerPid(content: string): number | null {
+  try {
+    const parsed = JSON.parse(content) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) ? parsed.pid : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw new Error("Unable to inspect existing local daemon upgrade lock", { cause: error });
+    }
+    return null;
+  }
+}
+
 async function acquireUpgradeLock(
   fs: UpgradeFilesystemDependencies,
   lockPath: string,
   now: () => number,
 ): Promise<() => Promise<void>> {
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
-  try {
-    await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, startedAt: now() }), {
-      flag: "wx",
-    });
-  } catch {
-    throw new Error("Another local daemon upgrade is already running");
-  }
-  return async () => {
-    await fs.unlink(lockPath).catch(() => undefined);
+  const payload = JSON.stringify({ pid: process.pid, startedAt: now() });
+  const readLock = async (): Promise<string | null> => {
+    if (!fs.readFile) return null;
+    return fs.readFile(lockPath).catch(() => null);
   };
+  while (true) {
+    try {
+      await fs.writeFile(lockPath, payload, { flag: "wx" });
+      return async () => {
+        const owned = await readLock();
+        if (owned === payload) await fs.unlink(lockPath).catch(() => undefined);
+      };
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (code !== "EEXIST") throw error;
+      const first = await readLock();
+      if (first === null) {
+        throw new Error("Another local daemon upgrade is already running", { cause: error });
+      }
+      const ownerPid = parseUpgradeLockOwnerPid(first);
+      if (ownerPid !== null && isPidRunning(ownerPid)) {
+        throw new Error("Another local daemon upgrade is already running", { cause: error });
+      }
+      const second = await readLock();
+      if (second !== first) continue;
+      await fs.unlink(lockPath).catch(() => undefined);
+    }
+  }
 }
 
 async function validateCheckout(
@@ -375,8 +445,14 @@ async function waitForHealth(
   timeoutMs: number,
 ): Promise<UpgradeAttestation> {
   const deadline = deps.now() + timeoutMs;
+  let lastError: unknown;
   while (deps.now() < deadline) {
-    const observed = await deps.daemon.probe({ home, timeoutMs: Math.min(1000, timeoutMs) });
+    let observed: UpgradeAttestation | null = null;
+    try {
+      observed = await deps.daemon.probe({ home, timeoutMs: Math.min(1000, timeoutMs) });
+    } catch (error) {
+      lastError = error;
+    }
     if (
       observed &&
       observed.pid !== oldPid &&
@@ -391,7 +467,8 @@ async function waitForHealth(
     }
     await deps.sleep(HEALTH_POLL_MS);
   }
-  throw new Error("new daemon failed health attestation before timeout");
+  const suffix = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(`new daemon failed health attestation before timeout${suffix}`);
 }
 
 async function waitForRelease(
@@ -414,7 +491,7 @@ async function startFromRoot(
   closureRoot: string,
   descriptor: CliLaunchDescriptor,
   sourceRevision: string,
-): Promise<{ pid: number | null; logPath: string | null }> {
+): Promise<UpgradeDaemonStartResult> {
   return deps.daemon.start({
     home,
     executable: path.join(closureRoot, "bin", "paseo"),
@@ -443,9 +520,138 @@ function validateDescriptor(descriptor: CliLaunchDescriptor | undefined): CliLau
 }
 interface ExistingDaemonState {
   lifecycle: PidLifecycle | undefined;
+  lock: PidLockInfo | null;
+  attested: UpgradeAttestation | null;
   pid: number;
   current: string | null;
   previous: string | null;
+}
+
+function isValidClosureRoot(value: string | undefined): value is string {
+  return Boolean(value && path.isAbsolute(value) && value.startsWith("/nix/store/"));
+}
+
+function replayValue<T>(owned: boolean | undefined, configured: T | undefined, fallback: T): T {
+  if (owned) return fallback;
+  return configured ?? fallback;
+}
+
+function refreshReplayDescriptor(
+  home: string,
+  descriptor: CliLaunchDescriptor,
+): CliLaunchDescriptor {
+  try {
+    const config = loadConfig(home, { env: {} });
+    const owned = descriptor.launchOwned;
+    return {
+      ...descriptor,
+      relayEnabled: replayValue(owned?.relayEnabled, config.relayEnabled, descriptor.relayEnabled),
+      relayUseTls: replayValue(owned?.relayUseTls, config.relayUseTls, descriptor.relayUseTls),
+      mcpEnabled: replayValue(owned?.mcpEnabled, config.mcpEnabled, descriptor.mcpEnabled),
+      mcpInjectIntoAgents: replayValue(
+        owned?.mcpInjectIntoAgents,
+        config.mcpInjectIntoAgents,
+        descriptor.mcpInjectIntoAgents,
+      ),
+      webUiEnabled: replayValue(
+        owned?.webUiEnabled,
+        config.webUi?.enabled,
+        descriptor.webUiEnabled,
+      ),
+      hostnames: replayValue(owned?.hostnames, config.hostnames, descriptor.hostnames),
+    };
+  } catch {
+    return descriptor;
+  }
+}
+function resolveLaunchDescriptor(
+  action: "upgrade" | "bootstrap",
+  home: string,
+  existing: ExistingDaemonState,
+  bootstrapDescriptor: CliLaunchDescriptor | undefined,
+): CliLaunchDescriptor | undefined {
+  if (action === "bootstrap") return bootstrapDescriptor;
+  const descriptor = existing.lifecycle?.descriptor;
+  return descriptor ? refreshReplayDescriptor(home, descriptor) : undefined;
+}
+
+function matchesExistingLock(expected: PidLockInfo, actual: PidLockInfo | null): boolean {
+  return Boolean(
+    actual &&
+    actual.pid === expected.pid &&
+    actual.startedAt === expected.startedAt &&
+    actual.hostname === expected.hostname &&
+    actual.uid === expected.uid,
+  );
+}
+
+async function attestExistingDaemon(
+  deps: ResolvedUpgradeDependencies,
+  options: LocalUpgradeOptions,
+  lock: PidLockInfo,
+  lifecycle: PidLifecycle,
+): Promise<UpgradeAttestation> {
+  const observed = await deps.daemon.probe({
+    home: options.home,
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  });
+  if (
+    !observed ||
+    observed.pid !== lock.pid ||
+    observed.serverId !== lifecycle.serverId ||
+    observed.listen !== lifecycle.descriptor?.listen ||
+    (lock.listen !== null && observed.listen !== lock.listen) ||
+    observed.sourceRevision !== lifecycle.sourceRevision ||
+    observed.closureRoot !== lifecycle.closureRoot
+  ) {
+    throw new Error("live daemon endpoint does not match its attested lifecycle record");
+  }
+  return observed;
+}
+
+async function resolveExistingActivation(
+  deps: ResolvedUpgradeDependencies,
+  releaseDir: string,
+  rootsDir: string,
+  lifecycle: PidLifecycle,
+): Promise<{ current: string; previous: string | null }> {
+  if (!isValidClosureRoot(lifecycle.closureRoot)) {
+    throw new Error("attested lifecycle closure root is not a valid Nix store path");
+  }
+  const currentPath = path.join(releaseDir, CURRENT_LINK);
+  let current = await readLinkOrNull(deps.fs, currentPath);
+  const previous = await readLinkOrNull(deps.fs, path.join(releaseDir, PREVIOUS_LINK));
+  if (!current) {
+    if (previous) throw new Error("active rooted closure is missing");
+    const sourceRevision = lifecycle.sourceRevision;
+    if (!sourceRevision || path.basename(sourceRevision) !== sourceRevision) {
+      throw new Error("attested lifecycle source revision cannot seed a release root");
+    }
+    const seedRoot = path.join(rootsDir, sourceRevision);
+    const rootedClosure = await readLinkOrNull(deps.fs, seedRoot);
+    if (rootedClosure && rootedClosure !== lifecycle.closureRoot) {
+      throw new Error("seed release root does not match the daemon lifecycle closure");
+    }
+    if (!rootedClosure) {
+      await deps.fs.mkdir(rootsDir, { recursive: true });
+      await deps.nix.addIndirectRoot({ rootPath: seedRoot, closureRoot: lifecycle.closureRoot });
+    }
+    current = path.relative(releaseDir, seedRoot);
+    return { current, previous };
+  }
+  const rootName = path.basename(current);
+  if (rootName !== lifecycle.sourceRevision) {
+    throw new Error("active rooted closure source revision does not match the daemon lifecycle");
+  }
+  const expectedRootLink = path.join(rootsDir, rootName);
+  if (path.resolve(releaseDir, current) !== path.resolve(expectedRootLink)) {
+    throw new Error("active release link does not point into the rooted closure directory");
+  }
+  const rootedClosure = await readLinkOrNull(deps.fs, expectedRootLink);
+  if (rootedClosure !== lifecycle.closureRoot) {
+    throw new Error("active rooted closure does not match the daemon lifecycle closure");
+  }
+  return { current, previous };
 }
 
 async function inspectExistingDaemon(
@@ -453,27 +659,43 @@ async function inspectExistingDaemon(
   options: LocalUpgradeOptions,
   action: "upgrade" | "bootstrap",
   releaseDir: string,
+  rootsDir: string,
 ): Promise<ExistingDaemonState> {
   const lock = await deps.daemon.readPidLock(options.home);
   if (action === "bootstrap") {
     if (lock && deps.daemon.isPidRunning(lock.pid)) {
       throw new Error("bootstrap requires the legacy daemon to be stopped first");
     }
-    return { lifecycle: undefined, pid: 0, current: null, previous: null };
+    return {
+      lifecycle: undefined,
+      lock: null,
+      attested: null,
+      pid: 0,
+      current: await readLinkOrNull(deps.fs, path.join(releaseDir, CURRENT_LINK)),
+      previous: await readLinkOrNull(deps.fs, path.join(releaseDir, PREVIOUS_LINK)),
+    };
   }
-  if (!lock || !deps.daemon.isPidRunning(lock.pid) || !isAttestedCliLifecycle(lock.lifecycle)) {
+  const lifecycle = lock?.lifecycle;
+  if (
+    !lock ||
+    !lifecycle ||
+    !deps.daemon.isPidRunning(lock.pid) ||
+    !isAttestedCliLifecycle(lifecycle) ||
+    !lifecycle.descriptor
+  ) {
     throw new Error("local upgrade requires a live, attested manager=cli lifecycle record");
   }
-  const current = await readLinkOrNull(deps.fs, path.join(releaseDir, CURRENT_LINK));
-  if (!current) throw new Error("active rooted closure is missing");
+  const observed = await attestExistingDaemon(deps, options, lock, lifecycle);
+  const activation = await resolveExistingActivation(deps, releaseDir, rootsDir, lifecycle);
   return {
-    lifecycle: lock.lifecycle,
+    lifecycle,
+    lock,
+    attested: observed,
     pid: lock.pid,
-    current,
-    previous: await readLinkOrNull(deps.fs, path.join(releaseDir, PREVIOUS_LINK)),
+    current: activation.current,
+    previous: activation.previous,
   };
 }
-
 async function stageAndSwitch(
   deps: ResolvedUpgradeDependencies,
   options: LocalUpgradeOptions,
@@ -483,19 +705,36 @@ async function stageAndSwitch(
   rootsDir: string,
   existing: ExistingDaemonState,
 ): Promise<{ closureRoot: string; switched: boolean }> {
-  const builtRoot =
-    options.stagedRoot ??
-    (await deps.nix.build({ checkout: options.checkout, revision })).closureRoot;
+  const builtRoot = (await deps.nix.build({ checkout: options.checkout, revision })).closureRoot;
+  if (options.stagedRoot && options.stagedRoot !== builtRoot) {
+    throw new Error("staged closure does not match the pinned checkout build");
+  }
   if (!path.isAbsolute(builtRoot))
     throw new Error("Nix build returned a non-absolute closure root");
+  await validateCheckout(deps, options.checkout, revision);
+  await deps.fs.access(path.join(builtRoot, "bin", "paseo"));
   await deps.fs.mkdir(rootsDir, { recursive: true });
   const rootLink = path.join(rootsDir, revision);
   await deps.nix.addIndirectRoot({ rootPath: rootLink, closureRoot: builtRoot });
-  if (action === "upgrade") {
-    if (!existing.current) throw new Error("active rooted closure is missing");
-    await replaceLink(deps.fs, path.join(releaseDir, PREVIOUS_LINK), existing.current, deps.now);
+  const previousPath = path.join(releaseDir, PREVIOUS_LINK);
+  const currentPath = path.join(releaseDir, CURRENT_LINK);
+  const previousBefore = await readLinkOrNull(deps.fs, previousPath);
+  const currentBefore = await readLinkOrNull(deps.fs, currentPath);
+  const restore = async (link: string, target: string | null): Promise<void> => {
+    if (target === null) await deps.fs.unlink(link).catch(() => undefined);
+    else await replaceLink(deps.fs, link, target, deps.now);
+  };
+  try {
+    if (action === "upgrade") {
+      if (!existing.current) throw new Error("active rooted closure is missing");
+      await replaceLink(deps.fs, previousPath, existing.current, deps.now);
+    }
+    await replaceLink(deps.fs, currentPath, rootLink, deps.now);
+  } catch (error) {
+    await restore(previousPath, previousBefore).catch(() => undefined);
+    await restore(currentPath, currentBefore).catch(() => undefined);
+    throw error;
   }
-  await replaceLink(deps.fs, path.join(releaseDir, CURRENT_LINK), rootLink, deps.now);
   return { closureRoot: builtRoot, switched: true };
 }
 
@@ -503,9 +742,25 @@ async function stopExistingDaemon(
   deps: ResolvedUpgradeDependencies,
   options: LocalUpgradeOptions,
   action: "upgrade" | "bootstrap",
+  existing: ExistingDaemonState,
   timeoutMs: number,
 ): Promise<void> {
-  if (action !== "upgrade") return;
+  if (action !== "upgrade" || !existing.lock || !existing.attested) return;
+  const lock = await deps.daemon.readPidLock(options.home);
+  if (!matchesExistingLock(existing.lock, lock)) {
+    throw new Error("daemon lifecycle lock changed before stop");
+  }
+  const observed = await deps.daemon.probe({ home: options.home, timeoutMs });
+  if (
+    !observed ||
+    observed.pid !== existing.attested.pid ||
+    observed.serverId !== existing.attested.serverId ||
+    observed.listen !== existing.attested.listen ||
+    observed.sourceRevision !== existing.attested.sourceRevision ||
+    observed.closureRoot !== existing.attested.closureRoot
+  ) {
+    throw new Error("daemon endpoint changed before destructive stop");
+  }
   await deps.daemon.stop(options.home, { timeoutMs, force: false });
   await waitForRelease(deps, options.home, timeoutMs);
 }
@@ -520,14 +775,20 @@ async function startAndAttest(
   existing: ExistingDaemonState,
   rootsDir: string,
   timeoutMs: number,
-): Promise<{ observed: UpgradeAttestation; logPath: string | null }> {
+  onStarted?: (launch: UpgradeDaemonStartResult) => void,
+): Promise<{
+  observed: UpgradeAttestation;
+  logPath: string | null;
+  launch: UpgradeDaemonStartResult;
+}> {
   const expected: Omit<UpgradeAttestation, "pid"> = {
     serverId: action === "upgrade" ? (existing.lifecycle?.serverId ?? "") : "",
     listen: descriptor.listen,
     sourceRevision: revision,
     closureRoot,
   };
-  const started = await startFromRoot(deps, options.home, closureRoot, descriptor, revision);
+  const launch = await startFromRoot(deps, options.home, closureRoot, descriptor, revision);
+  onStarted?.(launch);
   const observed = await waitForHealth(deps, options.home, expected, existing.pid, timeoutMs);
   if (action === "bootstrap" && !observed.serverId) {
     throw new Error("bootstrap health attestation missing server identity");
@@ -537,7 +798,78 @@ async function startAndAttest(
     retained.delete("");
     await pruneReleaseRoots(deps, rootsDir, retained);
   }
-  return { observed, logPath: started.logPath };
+  return { observed, logPath: launch.logPath, launch };
+}
+
+async function cleanupReplacementDaemon(
+  deps: ResolvedUpgradeDependencies,
+  options: LocalUpgradeOptions,
+  existing: ExistingDaemonState,
+  timeoutMs: number,
+  started: UpgradeDaemonStartResult | null,
+): Promise<PidLockInfo | null> {
+  await started?.cleanup?.();
+  const latest = await deps.daemon.readPidLock(options.home);
+  if (latest && latest.pid !== existing.pid && deps.daemon.isPidRunning(latest.pid)) {
+    await deps.daemon.stop(options.home, { timeoutMs, force: true });
+  }
+  if (!latest || latest.pid !== existing.pid) {
+    await waitForRelease(deps, options.home, timeoutMs);
+  }
+  return latest;
+}
+
+async function restoreActivationLinks(
+  deps: ResolvedUpgradeDependencies,
+  existing: ExistingDaemonState,
+  releaseDir: string,
+): Promise<void> {
+  if (existing.current) {
+    await replaceLink(deps.fs, path.join(releaseDir, CURRENT_LINK), existing.current, deps.now);
+  } else {
+    await deps.fs.unlink(path.join(releaseDir, CURRENT_LINK)).catch(() => undefined);
+  }
+  if (existing.previous) {
+    await replaceLink(deps.fs, path.join(releaseDir, PREVIOUS_LINK), existing.previous, deps.now);
+  } else {
+    await deps.fs.unlink(path.join(releaseDir, PREVIOUS_LINK)).catch(() => undefined);
+  }
+}
+
+async function restartExistingDaemon(
+  deps: ResolvedUpgradeDependencies,
+  options: LocalUpgradeOptions,
+  existing: ExistingDaemonState,
+  timeoutMs: number,
+): Promise<void> {
+  const lifecycle = existing.lifecycle;
+  if (!lifecycle?.descriptor || !lifecycle.sourceRevision || !lifecycle.closureRoot) return;
+  let restored: UpgradeDaemonStartResult | null = null;
+  try {
+    restored = await startFromRoot(
+      deps,
+      options.home,
+      lifecycle.closureRoot,
+      lifecycle.descriptor,
+      lifecycle.sourceRevision,
+    );
+    await waitForHealth(
+      deps,
+      options.home,
+      {
+        serverId: lifecycle.serverId ?? "",
+        listen: lifecycle.descriptor.listen,
+        sourceRevision: lifecycle.sourceRevision,
+        closureRoot: lifecycle.closureRoot,
+      },
+      existing.pid,
+      timeoutMs,
+    );
+  } catch (error) {
+    await restored?.cleanup?.();
+    await waitForRelease(deps, options.home, timeoutMs).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function rollbackUpgrade(
@@ -546,41 +878,12 @@ async function rollbackUpgrade(
   existing: ExistingDaemonState,
   releaseDir: string,
   timeoutMs: number,
+  started: UpgradeDaemonStartResult | null,
 ): Promise<void> {
-  const latest = await deps.daemon.readPidLock(options.home);
-  if (latest && latest.pid !== existing.pid && deps.daemon.isPidRunning(latest.pid)) {
-    await deps.daemon.stop(options.home, { timeoutMs, force: true });
-    await waitForRelease(deps, options.home, timeoutMs);
-  }
-  if (existing.current) {
-    await replaceLink(deps.fs, path.join(releaseDir, CURRENT_LINK), existing.current, deps.now);
-  }
-  if (existing.previous) {
-    await replaceLink(deps.fs, path.join(releaseDir, PREVIOUS_LINK), existing.previous, deps.now);
-  } else {
-    await deps.fs.unlink(path.join(releaseDir, PREVIOUS_LINK)).catch(() => undefined);
-  }
-  const lifecycle = existing.lifecycle;
-  if (!lifecycle?.descriptor || !lifecycle.sourceRevision || !lifecycle.closureRoot) return;
-  await startFromRoot(
-    deps,
-    options.home,
-    lifecycle.closureRoot,
-    lifecycle.descriptor,
-    lifecycle.sourceRevision,
-  );
-  await waitForHealth(
-    deps,
-    options.home,
-    {
-      serverId: lifecycle.serverId ?? "",
-      listen: lifecycle.descriptor.listen,
-      sourceRevision: lifecycle.sourceRevision,
-      closureRoot: lifecycle.closureRoot,
-    },
-    existing.pid,
-    timeoutMs,
-  );
+  const latest = await cleanupReplacementDaemon(deps, options, existing, timeoutMs, started);
+  await restoreActivationLinks(deps, existing, releaseDir);
+  if (latest && latest.pid === existing.pid && deps.daemon.isPidRunning(latest.pid)) return;
+  await restartExistingDaemon(deps, options, existing, timeoutMs);
 }
 
 async function runTransaction(
@@ -600,14 +903,17 @@ async function runTransaction(
   let rollback: LocalUpgradeResult["rollback"] = "not_needed";
   let logPath: string | null = null;
   let switched = false;
-  let existing: ExistingDaemonState;
+  let activeLaunch: UpgradeDaemonStartResult | null = null;
+  let existing: ExistingDaemonState = {
+    lifecycle: undefined,
+    lock: null,
+    attested: null,
+    pid: 0,
+    current: null,
+    previous: null,
+  };
   try {
-    existing = await inspectExistingDaemon(deps, options, action, releaseDir);
-  } catch (error) {
-    await unlock();
-    throw error;
-  }
-  try {
+    existing = await inspectExistingDaemon(deps, options, action, releaseDir, rootsDir);
     const staged = await stageAndSwitch(
       deps,
       options,
@@ -618,8 +924,8 @@ async function runTransaction(
       existing,
     );
     switched = staged.switched;
-    await stopExistingDaemon(deps, options, action, timeoutMs);
-    const descriptor = action === "upgrade" ? existing.lifecycle?.descriptor : bootstrapDescriptor;
+    await stopExistingDaemon(deps, options, action, existing, timeoutMs);
+    const descriptor = resolveLaunchDescriptor(action, options.home, existing, bootstrapDescriptor);
     if (!descriptor) throw new Error("CLI lifecycle descriptor is missing");
     const attested = await startAndAttest(
       deps,
@@ -631,7 +937,12 @@ async function runTransaction(
       existing,
       rootsDir,
       timeoutMs,
+      (launch) => {
+        activeLaunch = launch;
+        logPath = launch.logPath;
+      },
     );
+    activeLaunch = attested.launch;
     logPath = attested.logPath;
     return {
       action,
@@ -652,10 +963,10 @@ async function runTransaction(
       logPath,
     };
   } catch (error) {
-    if (switched && action === "upgrade") {
+    if (switched || activeLaunch || action === "bootstrap") {
       rollback = "failed";
       try {
-        await rollbackUpgrade(deps, options, existing, releaseDir, timeoutMs);
+        await rollbackUpgrade(deps, options, existing, releaseDir, timeoutMs, activeLaunch);
         rollback = "succeeded";
       } catch {
         rollback = "failed";

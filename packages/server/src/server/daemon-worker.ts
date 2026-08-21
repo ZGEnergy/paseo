@@ -109,10 +109,20 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
     cli.relayUseTls = true;
     override("daemon.relay.useTls");
   }
+  if (process.argv.includes("--mcp")) {
+    config.mcpEnabled = true;
+    cli.mcpEnabled = true;
+    override("daemon.mcp.enabled");
+  }
   if (process.argv.includes("--no-mcp")) {
     config.mcpEnabled = false;
     cli.mcpEnabled = false;
     override("daemon.mcp.enabled");
+  }
+  if (process.argv.includes("--inject-mcp")) {
+    config.mcpInjectIntoAgents = true;
+    cli.mcpInjectIntoAgents = true;
+    override("daemon.mcp.injectIntoAgents");
   }
   if (process.argv.includes("--no-inject-mcp")) {
     config.mcpInjectIntoAgents = false;
