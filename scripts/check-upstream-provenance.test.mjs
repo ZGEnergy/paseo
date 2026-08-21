@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   downstreamFeatureMarker,
+  effectiveApproval,
   exceptionEvidence,
   exceptionMode,
   resolveApproval,
@@ -136,6 +137,36 @@ test("preserves current-head approval across later comment-only reviews", () => 
         state: "APPROVED",
         commitOid: currentHead,
       },
+    );
+  }
+});
+
+test("accepts human merger evidence only for a closed-and-merged pull request", () => {
+  assert.deepEqual(
+    effectiveApproval(
+      {
+        state: "closed",
+        merged: true,
+        merged_by: { login: "merger", type: "User" },
+      },
+      "fork/project",
+      7,
+    ),
+    {
+      phase: "post-merge",
+      evidenceType: "human-merger",
+      authorLogin: "merger",
+      authorType: "User",
+    },
+  );
+  for (const current of [
+    { state: "closed", merged: false, merged_by: { login: "merger", type: "User" } },
+    { state: "closed", merged: true },
+    { state: "closed", merged: true, merged_by: { login: "automation", type: "Bot" } },
+  ]) {
+    assert.throws(
+      () => effectiveApproval(current, "fork/project", 7),
+      /closed and merged|human merged_by/,
     );
   }
 });

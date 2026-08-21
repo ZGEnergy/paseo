@@ -211,13 +211,47 @@ function resolveApproval(reviews, currentHead, authorLogin) {
   };
 }
 
+function mergedApproval(current) {
+  const state = current.state?.toLowerCase();
+  const isClosed = state === "closed";
+  const isMerged = current.merged === true;
+  if (isClosed && !isMerged) {
+    throw new Error(
+      "Downstream exception requires a closed and merged pull request for post-merge evidence",
+    );
+  }
+  if (isMerged && !isClosed) {
+    throw new Error(
+      "Downstream exception requires a closed and merged pull request for post-merge evidence",
+    );
+  }
+  if (!isClosed) return undefined;
+
+  const merger = current.merged_by;
+  if (!merger?.login || merger.type !== "User") {
+    throw new Error("Merged downstream exception requires a recorded human merged_by actor");
+  }
+  return {
+    phase: "post-merge",
+    evidenceType: "human-merger",
+    authorLogin: merger.login,
+    authorType: merger.type,
+  };
+}
+
 function effectiveApproval(current, repository, pullRequest) {
+  const postMergeApproval = mergedApproval(current);
+  if (postMergeApproval) return postMergeApproval;
   const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
-  return resolveApproval(
-    paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
-    currentHead,
-    current.user?.login ?? "",
-  );
+  return {
+    phase: "pre-merge",
+    evidenceType: "exact-head-review",
+    ...resolveApproval(
+      paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
+      currentHead,
+      current.user?.login ?? "",
+    ),
+  };
 }
 
 function exceptionEvidence(repository, pullRequest, mode, rationale, scope, approval) {
@@ -371,6 +405,23 @@ function patchIds(patch, label) {
   return ids;
 }
 
+function approvalSummary(approval) {
+  const lines = [
+    `- Approval phase: \`${approval.phase}\``,
+    `- Approval evidence: \`${approval.evidenceType}\``,
+  ];
+  if (approval.phase === "post-merge") {
+    lines.push(`- Human merger: \`${approval.authorLogin}\` (${approval.authorType})`);
+  } else {
+    lines.push(
+      `- Effective approval: review #${approval.id} by \`${approval.authorLogin}\` (${approval.authorType})`,
+      `- Review state: \`${approval.state}\``,
+      `- Review commit: \`${approval.commitOid}\` (matches current head)`,
+    );
+  }
+  return lines;
+}
+
 function writeEvidence(path, evidence) {
   if (path) {
     mkdirSync(dirname(path), { recursive: true });
@@ -384,9 +435,7 @@ function writeEvidence(path, evidence) {
         `- Rationale: ${evidence.rationale}`,
         `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
         `- Current pull request head: \`${evidence.currentHead}\``,
-        `- Effective approval: review #${evidence.approval.id} by \`${evidence.approval.authorLogin}\` (${evidence.approval.authorType})`,
-        `- Review state: \`${evidence.approval.state}\``,
-        `- Review commit: \`${evidence.approval.commitOid}\` (matches current head)`,
+        ...approvalSummary(evidence.approval),
         "- Result: **downstream feature exception accepted; no upstream patch equivalence asserted**",
         "",
       ];
@@ -400,9 +449,7 @@ function writeEvidence(path, evidence) {
         `- Exception scope: changed files restricted to the exact governance allowlist`,
         `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
         `- Current pull request head: \`${evidence.currentHead}\``,
-        `- Effective approval: review #${evidence.approval.id} by \`${evidence.approval.authorLogin}\` (${evidence.approval.authorType})`,
-        `- Review state: \`${evidence.approval.state}\``,
-        `- Review commit: \`${evidence.approval.commitOid}\` (matches current head)`,
+        ...approvalSummary(evidence.approval),
         "- Result: **downstream governance exception accepted; no upstream patch equivalence asserted**",
         "",
       ];
