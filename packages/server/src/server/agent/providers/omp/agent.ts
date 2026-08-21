@@ -147,11 +147,15 @@ export interface OmpProviderIdleAttempt {
   attempt: number;
   /** Consecutive `get_state` rejections; any successful response resets it. */
   consecutiveFailures: number;
-  /** Monotonic time since the gate opened, covering waits and `get_state`. */
+  /**
+   * Monotonic time since OMP last showed a sign of life: an event on the session,
+   * or a get_subagents reply naming a running child. Elapsed time alone is not a
+   * stall, so this measures silence rather than the length of the wait.
+   */
   elapsedMs: number;
   /** Whether the last observed state reported compaction in progress. */
   isCompacting: boolean;
-  /** Whether a current get_subagents reply still reports running children. */
+  /** Whether the gate is still waiting on OMP-internal subagents. */
   isWaitingOnSubagents: boolean;
 }
 
@@ -237,9 +241,8 @@ const OMP_PROVIDER_IDLE_BUDGET_MS = 60_000;
 // idle budget. Waiting on a reported compaction is not the stall this gate guards
 // against, but it still needs an end.
 const OMP_PROVIDER_COMPACTING_BUDGET_MS = 600_000;
-// Measured from the last snapshot that actually listed a running child, not from
-// the start of the fan-out: a fan-out has no bounded length, but OMP going quiet
-// about one does.
+// A fan-out has no bounded length, so this bounds silence about one, not the
+// fan-out itself: any reply naming a running child restarts the clock.
 const OMP_PROVIDER_SUBAGENT_BUDGET_MS = 600_000;
 // A get_state rejection already costs a full RPC timeout, so a few in a row are
 // enough evidence that the state path is gone.
@@ -255,18 +258,6 @@ function ompProviderIdleBudgetMs(waitingOnSubagents: boolean, compacting: boolea
     return OMP_PROVIDER_SUBAGENT_BUDGET_MS;
   }
   return compacting ? OMP_PROVIDER_COMPACTING_BUDGET_MS : OMP_PROVIDER_IDLE_BUDGET_MS;
-}
-
-type OmpProviderIdleWaitClass = "compacting" | "subagents" | "other";
-
-function ompProviderIdleWaitClass(
-  compacting: boolean,
-  subagentsConfirmed: boolean,
-): OmpProviderIdleWaitClass {
-  if (compacting) {
-    return "compacting";
-  }
-  return subagentsConfirmed ? "subagents" : "other";
 }
 
 export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -973,6 +964,7 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
   private providerIdleGate: { key: string; messages: OmpAgentMessage[] } | null = null;
+  private lastSessionEventAt = 0;
   private activeTurnHasUserMessage = false;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
@@ -1925,6 +1917,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleSessionEvent(event: OmpAgentSessionEvent): void {
+    // Any inbound event is proof OMP is working, which is what separates a
+    // second model cycle from the stale state this gate exists to bound.
+    this.lastSessionEventAt = this.now();
     const turnId = this.currentTurnIdForEvent();
 
     switch (event.type) {
@@ -2360,8 +2355,7 @@ export class OmpAgentSession implements AgentSession {
     const gate = { key, messages };
     this.providerIdleGate = gate;
     try {
-      let budgetStartedAt = this.now();
-      let waitClass: OmpProviderIdleWaitClass = "other";
+      let progressAt = this.now();
       let attempt = 0;
       let consecutiveFailures = 0;
       let lastState: OmpSessionState | null = null;
@@ -2394,25 +2388,21 @@ export class OmpAgentSession implements AgentSession {
             "OMP state unavailable while waiting for provider idle",
           );
         }
-        // Each condition gets its own budget, measured from when that condition
-        // began — otherwise a fan-out that ran for ten minutes blows the 60 s
-        // stall budget the instant the parent picks its results back up. A
-        // confirmed subagent report also restarts the clock, because every reply
-        // naming a running child is fresh evidence rather than elapsed silence.
-        const nextClass = ompProviderIdleWaitClass(
-          lastState?.isCompacting === true,
-          subagentsConfirmed,
-        );
-        if (nextClass !== waitClass || nextClass === "subagents") {
-          waitClass = nextClass;
-          budgetStartedAt = this.now();
+        // The budget spends silence, not elapsed time: an event on the session or
+        // a reply naming a running child restarts it. A state flag changing does
+        // not — a flag that flips back and forth would otherwise buy time forever,
+        // and a flag stuck on is the stall being bounded. The flags only choose
+        // how long the silence may last.
+        if (subagentsConfirmed) {
+          progressAt = this.now();
         }
+        progressAt = Math.max(progressAt, this.lastSessionEventAt);
         const decision = await this.providerIdleScheduler.waitForRetry({
           attempt,
           consecutiveFailures,
-          elapsedMs: this.now() - budgetStartedAt,
-          isCompacting: nextClass === "compacting",
-          isWaitingOnSubagents: nextClass === "subagents",
+          elapsedMs: this.now() - progressAt,
+          isCompacting: lastState?.isCompacting === true,
+          isWaitingOnSubagents: subagentsRunning,
         });
         if (!decision.retry) {
           if (!this.ownsProviderIdleGate(turnId)) {
@@ -2424,7 +2414,6 @@ export class OmpAgentSession implements AgentSession {
             consecutiveFailures,
             lastState,
             lastError,
-            subagentsRunning,
             subagentsConfirmed,
           });
           return;
@@ -2438,8 +2427,8 @@ export class OmpAgentSession implements AgentSession {
   }
 
   /**
-   * `fresh` reports whether this answer came from a snapshot OMP actually
-   * returned. The idle budget trusts running children only while it does.
+   * `listedRunning` reports whether OMP's own reply named a child still going.
+   * The budget restarts on that, never on the index alone.
    */
   private async pollOmpSubagents(): Promise<{ running: boolean; listedRunning: boolean }> {
     let snapshots: OmpSubagentSnapshot[] | null = null;
@@ -2455,10 +2444,10 @@ export class OmpAgentSession implements AgentSession {
     }
     this.settleDeferredTaskCalls();
     return {
-      // `running` is what the gate waits on (#2232). `listedRunning` is what the
-      // budget trusts: a reply OMP actually returned naming a child still going.
-      // The index also keeps never-listed lifecycle children running, and those
-      // are not evidence that anything is still happening.
+      // `running` is what the gate waits on (#2232) and how long the budget may
+      // run. `listedRunning` is what restarts the budget: a reply OMP actually
+      // returned naming a child still going. The index also keeps never-listed
+      // lifecycle children running, and those are not evidence of progress.
       running: this.subagentIndex.hasRunning(this.runtimeSession),
       listedRunning: (snapshots ?? []).some(
         (snapshot) =>
@@ -2477,13 +2466,14 @@ export class OmpAgentSession implements AgentSession {
       consecutiveFailures: number;
       lastState: OmpSessionState | null;
       lastError: unknown;
-      subagentsRunning: boolean;
       subagentsConfirmed: boolean;
     },
   ): void {
     // A hanging state path burns the wait budget before the failure budget, so a
     // gate that never saw a state is an unavailable state path whichever ran out.
-    const subagentsBlocked = context.subagentsRunning;
+    // Read the index now rather than trusting a flag carried across polls where
+    // subagents were never queried.
+    const subagentsBlocked = this.subagentIndex.hasRunning(this.runtimeSession);
     const stateUnavailable =
       context.reason === "failure_budget" || (!context.lastState && context.lastError !== null);
     // Both observations go into every diagnostic: which budget ran out says what
@@ -2503,7 +2493,7 @@ export class OmpAgentSession implements AgentSession {
         `last get_state error${failureCount}: ${toDiagnosticErrorMessage(context.lastError)}`,
       );
     }
-    if (context.subagentsRunning) {
+    if (subagentsBlocked) {
       details.push(
         context.subagentsConfirmed
           ? "OMP still listed running subagents"
