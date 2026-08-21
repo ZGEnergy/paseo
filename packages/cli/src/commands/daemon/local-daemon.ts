@@ -1,8 +1,13 @@
 import { spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import {
+  loadConfig,
+  resolvePaseoHome,
+  spawnProcess,
+  type CliLaunchDescriptor,
+} from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -17,6 +22,8 @@ export interface DaemonStartOptions {
   injectMcp?: boolean;
   webUi?: boolean;
   hostnames?: string;
+  sourceRevision?: string;
+  closureRoot?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -26,6 +33,14 @@ export interface LocalDaemonPidInfo {
   uid?: number;
   listen?: string;
   desktopManaged?: boolean;
+  lifecycle?: {
+    version: 1;
+    manager: "cli" | "desktop" | "system" | "unknown";
+    descriptor?: CliLaunchDescriptor;
+    sourceRevision?: string;
+    closureRoot?: string;
+    serverId?: string;
+  };
 }
 
 export interface LocalDaemonState {
@@ -137,9 +152,18 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.relayUseTls === true) {
     args.push("--relay-use-tls");
   }
+  if (options.relayUseTls === false) {
+    args.push("--no-relay-use-tls");
+  }
 
+  if (options.mcp === true) {
+    args.push("--mcp");
+  }
   if (options.mcp === false) {
     args.push("--no-mcp");
+  }
+  if (options.injectMcp === true) {
+    args.push("--inject-mcp");
   }
   if (options.injectMcp === false) {
     args.push("--no-inject-mcp");
@@ -154,28 +178,101 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   return args;
 }
 
-function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (options.home) {
-    childEnv.PASEO_HOME = options.home;
-  }
+function applyLaunchEnvironment(options: DaemonStartOptions, childEnv: NodeJS.ProcessEnv): void {
+  if (options.home) childEnv.PASEO_HOME = options.home;
   if (options.listen) {
     childEnv.PASEO_LISTEN = options.listen;
   } else if (options.port) {
     childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.hostnames) {
-    childEnv.PASEO_HOSTNAMES = options.hostnames;
+  if (options.hostnames !== undefined) {
+    childEnv.PASEO_HOSTNAMES = options.hostnames.trim() || "false";
   }
-  if (options.relayUseTls === true) {
-    childEnv.PASEO_RELAY_USE_TLS = "true";
+  if (options.relayUseTls !== undefined) childEnv.PASEO_RELAY_USE_TLS = String(options.relayUseTls);
+  if (options.webUi !== undefined) childEnv.PASEO_WEB_UI_ENABLED = String(options.webUi);
+}
+
+function resolveLaunchHostnames(
+  raw: string | undefined,
+  configured: CliLaunchDescriptor["hostnames"],
+): CliLaunchDescriptor["hostnames"] {
+  if (raw === undefined) return configured ?? null;
+  const hostnames = raw.trim();
+  const normalized = hostnames.toLowerCase();
+  if (!hostnames || ["false", "none", "null", "off", "disabled"].includes(normalized)) return null;
+  if (normalized === "true") return true;
+  return hostnames
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function buildLaunchDescriptor(
+  options: DaemonStartOptions,
+  config: ReturnType<typeof loadConfig>,
+): CliLaunchDescriptor {
+  const launchOwned = {
+    ...(options.relay !== undefined ? { relayEnabled: true } : {}),
+    ...(options.relayUseTls !== undefined ? { relayUseTls: true } : {}),
+    ...(options.mcp !== undefined ? { mcpEnabled: true } : {}),
+    ...(options.injectMcp !== undefined ? { mcpInjectIntoAgents: true } : {}),
+    ...(options.webUi !== undefined ? { webUiEnabled: true } : {}),
+    ...(options.hostnames !== undefined ? { hostnames: true } : {}),
+  };
+  return {
+    listen: config.listen,
+    relayEnabled: options.relay ?? config.relayEnabled ?? true,
+    relayUseTls: options.relayUseTls ?? config.relayUseTls ?? false,
+    mcpEnabled: options.mcp ?? config.mcpEnabled ?? true,
+    mcpInjectIntoAgents: options.injectMcp ?? config.mcpInjectIntoAgents ?? false,
+    webUiEnabled: options.webUi ?? config.webUi?.enabled ?? false,
+    hostnames: resolveLaunchHostnames(options.hostnames, config.hostnames ?? null),
+    ...(Object.keys(launchOwned).length > 0 ? { launchOwned } : {}),
+  };
+}
+
+function resolveReleasesPath(home: string, env: NodeJS.ProcessEnv): string {
+  const dataHome = env.XDG_DATA_HOME?.trim() || path.join(env.HOME || home, ".local", "share");
+  return path.join(dataHome, "paseo", "releases");
+}
+
+function deriveRootedSourceRevision(home: string, env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const current = readlinkSync(path.join(resolveReleasesPath(home, env), "current"));
+    const revision = path.basename(current);
+    return revision && revision !== "." ? revision : undefined;
+  } catch {
+    return undefined;
   }
-  if (options.webUi === true) {
-    childEnv.PASEO_WEB_UI_ENABLED = "true";
-  }
-  if (options.webUi === false) {
-    childEnv.PASEO_WEB_UI_ENABLED = "false";
-  }
+}
+
+function deriveNixClosureRoot(runnerEntry: string): string | undefined {
+  const marker = `${path.sep}nix${path.sep}store${path.sep}`;
+  const index = runnerEntry.indexOf(marker);
+  if (index < 0) return undefined;
+  const rest = runnerEntry.slice(index + marker.length);
+  const name = rest.split(path.sep)[0];
+  return name ? path.join(path.sep, "nix", "store", name) : undefined;
+}
+
+function buildChildEnv(options: DaemonStartOptions, runnerEntry: string): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  applyLaunchEnvironment(options, childEnv);
+  const paseoHome = resolvePaseoHome(childEnv);
+  const config = loadConfig(paseoHome, { env: childEnv });
+  const descriptor = buildLaunchDescriptor(options, config);
+  childEnv.PASEO_LIFECYCLE_MANAGER = "cli";
+  childEnv.PASEO_LIFECYCLE_DESCRIPTOR = JSON.stringify(descriptor);
+  childEnv.PASEO_LIFECYCLE_SOURCE_REVISION =
+    options.sourceRevision ??
+    childEnv.PASEO_SOURCE_REVISION ??
+    deriveRootedSourceRevision(paseoHome, childEnv) ??
+    "local";
+  childEnv.PASEO_LIFECYCLE_CLOSURE_ROOT =
+    options.closureRoot ??
+    childEnv.PASEO_CLOSURE_ROOT ??
+    deriveNixClosureRoot(runnerEntry) ??
+    path.dirname(runnerEntry);
   return childEnv;
 }
 
@@ -252,6 +349,11 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       return null;
     }
 
+    const rawLifecycle = parsed.lifecycle;
+    const lifecycle =
+      typeof rawLifecycle === "object" && rawLifecycle !== null
+        ? (rawLifecycle as LocalDaemonPidInfo["lifecycle"])
+        : undefined;
     return {
       pid: pidValue,
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
@@ -259,6 +361,7 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
       listen: resolveListenField(parsed.listen, parsed.sockPath),
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
+      lifecycle,
     };
   } catch {
     return null;
@@ -583,11 +686,11 @@ export async function startLocalDaemonDetached(
   if (options.listen && options.port) {
     throw new Error("Cannot use --listen and --port together");
   }
-
   const daemonRunnerEntry = runtime.resolveRunnerEntry();
-  const childEnv = buildChildEnv(options);
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
 
   const paseoHome = runtime.resolveHome(childEnv);
+
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
   const child = runtime.spawnDetached(
     process.execPath,
@@ -654,7 +757,7 @@ export function startLocalDaemonForeground(
   }
 
   const daemonRunnerEntry = runtime.resolveRunnerEntry();
-  const childEnv = buildChildEnv(options);
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
   const result = runtime.spawnForeground(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],

@@ -6,9 +6,9 @@ import { runRestartCommand } from "./restart.js";
 import { runSetPasswordCommand } from "./set-password.js";
 import { pairCommand } from "./pair.js";
 import { runDaemonReloadCommand } from "./reload.js";
+import { upgradeLocalCommand, bootstrapUpgradeCommand } from "./upgrade.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions, addJsonOption } from "../../utils/command-options.js";
-
 function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
   if (typeof hostnames === "string") return hostnames;
   if (typeof allowedHosts === "string") return allowedHosts;
@@ -19,6 +19,8 @@ export function createDaemonCommand(): Command {
   const daemon = new Command("daemon").description("Manage the Paseo daemon");
 
   daemon.addCommand(startCommand());
+  daemon.addCommand(upgradeLocalCommand());
+  daemon.addCommand(bootstrapUpgradeCommand());
   daemon.addCommand(pairCommand());
 
   addJsonAndDaemonHostOptions(
@@ -45,12 +47,37 @@ export function createDaemonCommand(): Command {
       "Listen target for restarted daemon (host:port, port, or unix socket)",
     )
     .option("--port <port>", "Port for restarted daemon listen target")
-    .option("--relay", "Enable relay on restarted daemon")
-    .option("--no-relay", "Disable relay on restarted daemon")
-    .option("--no-mcp", "Disable Agent MCP on restarted daemon")
-    .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
-    .option("--web-ui", "Enable the bundled daemon web UI on restarted daemon")
-    .option("--no-web-ui", "Disable the bundled daemon web UI on restarted daemon")
+    .addOption(
+      new Option("--relay-use-tls", "Use wss:// for relay on restarted daemon").default(undefined),
+    )
+    .addOption(
+      new Option("--no-relay-use-tls", "Use ws:// for relay on restarted daemon").default(
+        undefined,
+      ),
+    )
+    .addOption(new Option("--mcp", "Enable Agent MCP on restarted daemon").default(undefined))
+    .addOption(new Option("--no-mcp", "Disable Agent MCP on restarted daemon").default(undefined))
+    .addOption(
+      new Option("--inject-mcp", "Enable auto-injecting the Paseo MCP into created agents").default(
+        undefined,
+      ),
+    )
+    .addOption(
+      new Option(
+        "--no-inject-mcp",
+        "Disable auto-injecting the Paseo MCP into created agents",
+      ).default(undefined),
+    )
+    .addOption(
+      new Option("--web-ui", "Enable the bundled daemon web UI on restarted daemon").default(
+        undefined,
+      ),
+    )
+    .addOption(
+      new Option("--no-web-ui", "Disable the bundled daemon web UI on restarted daemon").default(
+        undefined,
+      ),
+    )
     .option(
       "--hostnames <hosts>",
       'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',

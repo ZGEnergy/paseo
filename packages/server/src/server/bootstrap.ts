@@ -528,6 +528,12 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function resolveInitialHostnames(
+  config: PaseoDaemonConfig,
+): Partial<Pick<MutableDaemonConfig, "hostnames">> {
+  if (config.hostnames === undefined || config.hostnames === null) return {};
+  return { hostnames: config.hostnames };
+}
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -537,7 +543,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       enabled: config.mcpEnabled ?? true,
       injectIntoAgents: config.mcpInjectIntoAgents ?? true,
     },
-    ...(config.hostnames !== undefined ? { hostnames: config.hostnames } : {}),
+    ...resolveInitialHostnames(config),
     cors: { allowedOrigins: config.corsAllowedOrigins },
     trustedProxies: config.trustedProxies ?? ["loopback"],
     git: config.git ?? resolveGitProcessPolicy({ env: process.env }),

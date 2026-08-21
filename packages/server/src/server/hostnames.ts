@@ -1,6 +1,6 @@
 import net from "node:net";
 
-export type HostnamesConfig = true | string[] | undefined;
+export type HostnamesConfig = true | string[] | null | undefined;
 
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase();
@@ -51,7 +51,7 @@ function isDefaultAllowedHostname(hostname: string): boolean {
  *
  * Semantics:
  * - `hostnames === true` => allow any host.
- * - `hostnames === []` or `undefined` => allow localhost, *.localhost, and all IPs.
+ * - `hostnames === null`, `[]`, or `undefined` => allow localhost, *.localhost, and all IPs.
  * - `hostnames === ['.example.com', 'myhost']` => allow those *in addition* to defaults.
  */
 export function isHostnameAllowed(
@@ -77,6 +77,7 @@ export function mergeHostnames(values: Array<HostnamesConfig>): HostnamesConfig 
   let merged: string[] = [];
   for (const value of values) {
     if (value === true) return true;
+    if (value === null) return null;
     if (!value) continue;
     merged = merged.concat(value);
   }
@@ -89,7 +90,9 @@ export function parseHostnamesEnv(raw: string | undefined): HostnamesConfig {
   if (!raw) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (trimmed.toLowerCase() === "true") return true;
+  const normalized = trimmed.toLowerCase();
+  if (["false", "none", "null", "off", "disabled"].includes(normalized)) return null;
+  if (normalized === "true") return true;
   return trimmed
     .split(",")
     .map((s) => s.trim())
