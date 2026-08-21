@@ -21,18 +21,31 @@ Feature and governance markers cannot coexist with each other or with upstream-p
 
 ### Approval phases
 
-Downstream governance and feature exceptions have two approval phases. Before merge, the **pre-merge** phase requires one non-author human `APPROVED` review whose commit SHA exactly matches the pull-request head. After merge, the **post-merge** phase accepts the human actor recorded in `merged_by` as approval evidence only when the pull request is both `closed` and `merged`. Missing or bot merger data, and a closed-but-unmerged pull request, fail provenance; closure alone never bypasses review.
+Downstream feature exceptions have two approval phases. Before merge, the **pre-merge** phase requires one non-author human `APPROVED` review whose commit SHA exactly matches the pull-request head. After merge, the **post-merge** phase accepts the human actor recorded in `merged_by` as approval evidence only when the pull request is both `closed` and `merged`. Missing or bot merger data, and a closed-but-unmerged pull request, fail provenance; closure alone never bypasses review. Downstream governance exceptions do not require approval in either phase.
 
-The provenance evidence records the phase and evidence type that qualified: an exact-head review before merge or a human merger after merge. Manual provenance dispatch selects the same phase from current pull-request state.
+The provenance evidence for feature exceptions records the phase and evidence type that qualified: an exact-head review before merge or a human merger after merge. Manual provenance dispatch selects the same phase from current pull-request state. Governance exceptions record their downstream-governance outcome without approval evidence.
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
+
+## Upstream-port preflight
+
+An upstream-port pull request must start from the fetched `getpaseo/paseo` upstream `main`, not from `internal/main` or any other fork-descendant branch. Before creating the pull request, run the deterministic local guard with the candidate ref, fetched upstream ref, and every permitted path:
+
+```sh
+node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref <fetched-upstream-ref> --integration-ref origin/internal/main --allow-path <path>
+```
+
+The guard resolves both refs locally, requires the upstream commit to be the candidate's merge base, and rejects every changed path outside the declared scopes using exact prefix boundaries. Repeat `--allow-path` for multiple scopes. The agent may run `gh pr create` only after successful preflight. The guard never fetches, interpolates shell input, or opens a pull request.
 
 ### Narrow downstream-governance exception
 
 A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
 
+- `CLAUDE.md`
 - `scripts/check-upstream-provenance.mjs`
 - `scripts/check-upstream-provenance.test.mjs`
+- `scripts/check-upstream-port.mjs`
+- `scripts/check-upstream-port.test.mjs`
 - `scripts/ci-workflow.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`

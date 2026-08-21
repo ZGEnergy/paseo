@@ -183,3 +183,13 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 ## Debugging
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
+
+## Upstream port rule
+
+For an upstream-port pull request, fetch both `origin/main` and `origin/internal/main`, create the candidate directly from fetched upstream `main`, and run the local preflight before opening the pull request:
+
+```sh
+node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref origin/main --integration-ref origin/internal/main --allow-path <path>
+```
+
+Repeat `--allow-path` for each permitted path. The required integration ref rejects candidates descended from `origin/internal/main`, even when all changed paths are allowed. Only after successful preflight may an agent run `gh pr create`. Never use `internal/main` or any fork-descendant branch as the candidate source.
