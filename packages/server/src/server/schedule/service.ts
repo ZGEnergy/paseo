@@ -203,7 +203,7 @@ type ScheduleAgentManager = Pick<
   AgentRunController,
   | "getAgent"
   | "tryRunOutOfBand"
-  | "hasInFlightRun"
+  | "hasBlockingRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
@@ -851,7 +851,7 @@ export class ScheduleService {
         agentStorage: this.agentStorage,
         logger: this.logger,
       });
-      if (this.agentManager.hasInFlightRun(agent.id)) {
+      if (this.agentManager.hasBlockingRun(agent.id)) {
         throw new Error(`Agent ${agent.id} already has an active run`);
       }
       await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {

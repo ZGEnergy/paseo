@@ -6829,6 +6829,68 @@ test("preserves terminal fallback when no active turn identity was observed", as
   );
 });
 
+test("refused autonomous cancellation stays fail-closed while its terminal settles", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-refused-settlement-window-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RefusedInterruptSession extends TestAgentSession {
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: "refused-autonomous-turn",
+        reason: "interrupted",
+      });
+      throw new Error("provider refused interrupt");
+    }
+  }
+
+  const session = new RefusedInterruptSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000127",
+  });
+  const lifecycleUpdates: ManagedAgent["lifecycle"][] = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        lifecycleUpdates.push(event.agent.lifecycle);
+      }
+    },
+    { agentId: "00000000-0000-4000-8000-000000000127", replayState: false },
+  );
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    session.pushEvent({
+      type: "turn_started",
+      provider: session.provider,
+      turnId: "refused-autonomous-turn",
+    });
+    await running;
+    const updatesBeforeCancel = lifecycleUpdates.length;
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+
+    expect(lifecycleUpdates.slice(updatesBeforeCancel)).not.toContain("idle");
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "running" });
+  } finally {
+    unsubscribe();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000127").catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-cancel-"));
   const storagePath = join(workdir, "agents");
@@ -6924,6 +6986,102 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 });
 
+test("acknowledged autonomous cancellation does not emit idle for a newer tracked run", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-newer-run-reconciliation-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = "00000000-0000-4000-8000-000000000128";
+  let manager!: AgentManager;
+  const foregroundStartEntered = deferred<void>();
+  const allowForegroundStart = deferred<void>();
+  const foregroundStartReturned = deferred<void>();
+  const foregroundStreamDone = deferred<void>();
+
+  class NewerRunSession extends TestAgentSession {
+    override readonly acceptsPromptDuringAutonomousTurn = true;
+    startTurnCalls = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.startTurnCalls += 1;
+      foregroundStartEntered.resolve(undefined);
+      await allowForegroundStart.promise;
+      foregroundStartReturned.resolve(undefined);
+      return { turnId: "newer-foreground-turn" };
+    }
+
+    override async interrupt(): Promise<void> {
+      const stream = manager.streamAgent(agentId, "newer foreground prompt");
+      void (async () => {
+        try {
+          for await (const _event of stream) {
+            // Keep the newer stream subscribed until its terminal event.
+          }
+        } finally {
+          foregroundStreamDone.resolve(undefined);
+        }
+      })();
+      await foregroundStartEntered.promise;
+    }
+  }
+
+  const session = new NewerRunSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+  const lifecycleUpdates: ManagedAgent["lifecycle"][] = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        lifecycleUpdates.push(event.agent.lifecycle);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    session.pushEvent({
+      type: "turn_started",
+      provider: session.provider,
+      turnId: "older-autonomous-turn",
+    });
+    await running;
+    const updatesBeforeCancel = lifecycleUpdates.length;
+
+    const cancelPromise = manager.cancelAgentRun(agent.id);
+    await foregroundStartEntered.promise;
+    await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+
+    expect(lifecycleUpdates.slice(updatesBeforeCancel)).not.toContain("idle");
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "running" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+    expect(session.startTurnCalls).toBe(1);
+
+    allowForegroundStart.resolve(undefined);
+    await foregroundStartReturned.promise;
+    session.pushEvent({
+      type: "turn_completed",
+      provider: session.provider,
+      turnId: "newer-foreground-turn",
+    });
+    await foregroundStreamDone.promise;
+  } finally {
+    unsubscribe();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("failed replacement cancellation preserves an autonomous running state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-replace-rejected-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -6975,6 +7133,228 @@ test("failed replacement cancellation preserves an autonomous running state", as
       activeForegroundTurnId: null,
     });
   } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prompting an agent whose only run is autonomous starts a turn without interrupting", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class AutonomousSession extends TestAgentSession {
+    readonly acceptsPromptDuringAutonomousTurn = true;
+    interruptCount = 0;
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "foreground-1" };
+    }
+  }
+
+  class AutonomousClient extends TestAgentClient {
+    readonly session = new AutonomousSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new AutonomousClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000131",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous-1" });
+    await running;
+
+    await startAgentRun(manager, agent.id, "follow-up", logger, { replaceRunning: true });
+
+    expect(client.session.interruptCount).toBe(0);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      activeForegroundTurnId: "foreground-1",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prompting during an autonomous turn replaces it when the provider refuses both", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-refuses-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ExclusiveSession extends TestAgentSession {
+    interruptCount = 0;
+    autonomousTurnId: string | null = "autonomous-1";
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+      const turnId = this.autonomousTurnId;
+      if (!turnId) return;
+      this.autonomousTurnId = null;
+      this.pushEvent({ type: "turn_canceled", provider: "codex", turnId, reason: "interrupted" });
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      if (this.autonomousTurnId) {
+        throw new Error("A foreground turn is already active");
+      }
+      return { turnId: "foreground-1" };
+    }
+  }
+
+  class ExclusiveClient extends TestAgentClient {
+    readonly session = new ExclusiveSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new ExclusiveClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous-1" });
+    await running;
+
+    await startAgentRun(manager, agent.id, "follow-up", logger, { replaceRunning: true });
+
+    expect(client.session.interruptCount).toBe(1);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      activeForegroundTurnId: "foreground-1",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+test("rejected OpenCode aborts remain blocking after a late natural autonomous terminal", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-abort-terminal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const secondInterruptStarted = deferred<void>();
+  const allowSecondInterrupt = deferred<void>();
+  let stateUpdateCount = 0;
+
+  class RejectedAbortAutonomousSession extends TestAgentSession {
+    abortAttempts = 0;
+    interruptCount = 0;
+    startTurnCalls = 0;
+    secondTerminalEmittedBeforeInterruptReturn = false;
+
+    override async interrupt(): Promise<void> {
+      this.abortAttempts += 2;
+      this.interruptCount += 1;
+      if (this.interruptCount === 1) {
+        // Model both OpenCode abort attempts rejecting after the manager's rescue timeout.
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        throw new Error("OpenCode abort failed");
+      }
+      secondInterruptStarted.resolve();
+      await allowSecondInterrupt.promise;
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: "opencode-autonomous-1",
+        reason: "interrupted",
+      });
+      // Provider terminal is emitted before interrupt() resolves; manager must reconcile both.
+      this.secondTerminalEmittedBeforeInterruptReturn = true;
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.startTurnCalls += 1;
+      return { turnId: "foreground-after-ack" };
+    }
+  }
+
+  class RejectedAbortClient extends TestAgentClient {
+    readonly session = new RejectedAbortAutonomousSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new RejectedAbortClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.lifecycle === "running") {
+        stateUpdateCount += 1;
+      }
+    },
+    { agentId: "00000000-0000-4000-8000-000000000133", replayState: false },
+  );
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({
+      type: "turn_started",
+      provider: client.session.provider,
+      turnId: "opencode-autonomous-1",
+    });
+    await running;
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+    expect(client.session.abortAttempts).toBe(2);
+    expect(client.session.startTurnCalls).toBe(0);
+    const updatesBeforeLateTerminal = stateUpdateCount;
+
+    // Natural terminal deliberately arrives only after refused cancellation has returned.
+    client.session.pushEvent({
+      type: "turn_completed",
+      provider: client.session.provider,
+      turnId: "opencode-autonomous-1",
+    });
+    await vi.waitFor(() => expect(stateUpdateCount).toBeGreaterThan(updatesBeforeLateTerminal));
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "running" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+    expect(manager.hasBlockingRun(agent.id)).toBe(true);
+
+    const directCancel = manager.cancelAgentRun(agent.id);
+    await secondInterruptStarted.promise;
+    expect(client.session.startTurnCalls).toBe(0);
+    allowSecondInterrupt.resolve();
+    await expect(directCancel).resolves.toEqual({ status: "settled" });
+    expect(client.session.secondTerminalEmittedBeforeInterruptReturn).toBe(true);
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(manager.hasBlockingRun(agent.id)).toBe(false);
+  } finally {
+    unsubscribe();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000133").catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

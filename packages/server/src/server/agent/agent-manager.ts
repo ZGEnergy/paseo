@@ -68,7 +68,11 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
+import {
+  AgentRunState,
+  type ForegroundTurnWaiter,
+  type TrackedAgentRun,
+} from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
@@ -338,6 +342,12 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
 interface StreamEventFlags {
   shouldDispatchEvent: boolean;
   shouldNotifyWaiters: boolean;
+}
+
+interface RefusedAutonomousCancellation {
+  turnId: string | null;
+  runToken: string;
+  retrackedRunToken: string | null;
 }
 
 type ActiveTurnTerminalDisposition = "closed_current" | "stale" | "untracked";
@@ -678,6 +688,10 @@ export class AgentManager {
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
+  private readonly refusedAutonomousCancellations = new Map<
+    string,
+    RefusedAutonomousCancellation
+  >();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
@@ -884,6 +898,18 @@ export class AgentManager {
       Boolean(agent.activeForegroundTurnId) ||
       this.runs.hasRun(agentId)
     );
+  }
+
+  hasBlockingRun(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return false;
+    }
+    if (!agent.session.acceptsPromptDuringAutonomousTurn) {
+      return this.hasInFlightRun(agentId);
+    }
+
+    return Boolean(agent.activeForegroundTurnId) || this.runs.hasForegroundRun(agentId);
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -2181,7 +2207,11 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    if (
+      existingAgent.activeForegroundTurnId ||
+      this.runs.hasForegroundRun(agentId) ||
+      (this.runs.hasRun(agentId) && !existingAgent.session.acceptsPromptDuringAutonomousTurn)
+    ) {
       this.logger.trace(
         {
           agentId,
@@ -2207,6 +2237,7 @@ export class AgentManager {
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
       try {
         const result = await agent.session.startTurn(prompt, options);
+        this.refusedAutonomousCancellations.delete(agentId);
         turnId = result.turnId;
       } catch (error) {
         agent.pendingReplacement = false;
@@ -2365,6 +2396,40 @@ export class AgentManager {
     agent.activeTurnId = null;
     agent.activeTurnStartedAt = null;
     return "closed_current";
+  }
+
+  private hasRefusedAutonomousCancellation(agentId: string, turnId?: string): boolean {
+    const cancellation = this.refusedAutonomousCancellations.get(agentId);
+    if (!cancellation) {
+      return false;
+    }
+    return cancellation.turnId === null || turnId == null || cancellation.turnId === turnId;
+  }
+
+  private reconcileRefusedAutonomousTerminal(
+    agent: ActiveManagedAgent,
+    eventTurnId?: string,
+  ): boolean {
+    const cancellation = this.refusedAutonomousCancellations.get(agent.id);
+    if (!cancellation || !this.hasRefusedAutonomousCancellation(agent.id, eventTurnId)) {
+      return false;
+    }
+
+    this.runs.settleTerminalRun(agent.id, eventTurnId);
+    const runAfterTerminal = this.runs.getRun(agent.id);
+    const retrackedRun =
+      runAfterTerminal ??
+      this.runs.trackAutonomousRun(agent.id, cancellation.turnId ?? eventTurnId ?? null);
+    if (
+      !runAfterTerminal &&
+      retrackedRun.kind === "autonomous" &&
+      retrackedRun.token !== cancellation.runToken
+    ) {
+      cancellation.retrackedRunToken = retrackedRun.token;
+    }
+    agent.lifecycle = "running";
+    this.emitState(agent);
+    return true;
   }
 
   async replaceAgentRun(
@@ -2724,15 +2789,50 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
+    const autonomousCancellation = run.kind === "autonomous";
+    const cancellationMarker = autonomousCancellation
+      ? {
+          turnId: run.turnId,
+          runToken: run.token,
+          retrackedRunToken: null,
+        }
+      : null;
+    if (cancellationMarker) {
+      // The provider may deliver a terminal synchronously from interrupt(). Install the
+      // fail-closed marker before yielding so that terminal handling cannot emit idle/error.
+      this.refusedAutonomousCancellations.set(agentId, cancellationMarker);
+    }
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    if (interruptAcknowledged) {
+      this.refusedAutonomousCancellations.delete(agentId);
+    }
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
         ? INTERRUPT_SESSION_TIMEOUT_MS
         : this.rescueTimeouts.interruptSessionMs,
     });
+    // A provider terminal can be delivered synchronously before interrupt() resolves. In that
+    // ordering, refused-cancellation reconciliation may re-track the autonomous run after the
+    // original run settles; an acknowledged retry must retire that preserved tracking state.
+    if (interruptAcknowledged) {
+      this.reconcileAcknowledgedAutonomousCancellation(
+        agentId,
+        agent,
+        run,
+        settlement,
+        cancellationMarker,
+      );
+    }
 
     if (!interruptAcknowledged) {
+      if (run.kind === "autonomous") {
+        // Refused cancellation stays fail-closed even if a late terminal settles this run.
+        this.runs.trackAutonomousRun(agentId, run.turnId);
+        agent.lifecycle = "running";
+        this.emitState(agent);
+        return { status: "refused" };
+      }
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
@@ -2766,6 +2866,47 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private reconcileAcknowledgedAutonomousCancellation(
+    agentId: string,
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+    settlement: TimeoutResult,
+    cancellationMarker: RefusedAutonomousCancellation | null,
+  ): void {
+    if (run.kind !== "autonomous" || !cancellationMarker) {
+      return;
+    }
+
+    const currentRun = this.runs.getRun(agentId);
+    const activeTurnBelongsToCanceledRun =
+      !agent.activeTurnId || (run.turnId !== null && agent.activeTurnId === run.turnId);
+    const isOriginalRun =
+      !currentRun ||
+      (currentRun.token === run.token &&
+        !agent.activeForegroundTurnId &&
+        activeTurnBelongsToCanceledRun);
+    const isTerminalRetrack =
+      currentRun?.token === cancellationMarker.retrackedRunToken &&
+      !agent.activeForegroundTurnId &&
+      activeTurnBelongsToCanceledRun;
+    if (!isOriginalRun && !isTerminalRetrack) {
+      return;
+    }
+
+    this.runs.settleTerminalRun(agentId, run.turnId ?? undefined);
+    if (
+      settlement === "completed" &&
+      !agent.pendingReplacement &&
+      !agent.activeForegroundTurnId &&
+      !agent.activeTurnId &&
+      !this.runs.hasRun(agentId) &&
+      agent.lifecycle === "running"
+    ) {
+      (agent as ManagedAgent).lifecycle = "idle";
+      this.emitState(agent);
+    }
   }
 
   private async cancelAgentRunBefore(
@@ -3368,6 +3509,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.refusedAutonomousCancellations.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -3877,7 +4019,9 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
-        this.runs.settleTerminalRun(agent.id, eventTurnId);
+        if (!this.reconcileRefusedAutonomousTerminal(agent, eventTurnId)) {
+          this.runs.settleTerminalRun(agent.id, eventTurnId);
+        }
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
         }
@@ -4024,6 +4168,8 @@ export class AgentManager {
           terminalDisposition,
           options,
         });
+
+        return undefined;
       case "turn_canceled":
         this.onStreamTurnCanceled({
           agent,
@@ -4135,7 +4281,8 @@ export class AgentManager {
       !isForegroundEvent &&
       !agent.activeForegroundTurnId &&
       agent.lifecycle !== "idle" &&
-      !agent.pendingReplacement
+      !agent.pendingReplacement &&
+      !this.hasRefusedAutonomousCancellation(agent.id, eventTurnId)
     ) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
       this.emitState(agent);
@@ -4152,6 +4299,8 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+
+    if (terminalDisposition === "stale") return;
     this.logger.warn(
       {
         agentId: agent.id,
@@ -4167,8 +4316,11 @@ export class AgentManager {
       },
       "handleStreamEvent: turn_failed",
     );
-    if (terminalDisposition === "stale") return;
-    if (!isForegroundEvent && !agent.activeForegroundTurnId) {
+    if (
+      !isForegroundEvent &&
+      !agent.activeForegroundTurnId &&
+      !this.hasRefusedAutonomousCancellation(agent.id, eventTurnId)
+    ) {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
@@ -4210,7 +4362,12 @@ export class AgentManager {
       "agent.manager.turn.canceled",
     );
     if (terminalDisposition === "stale") return;
-    if (!isForegroundEvent && !agent.activeForegroundTurnId && !agent.pendingReplacement) {
+    if (
+      !isForegroundEvent &&
+      !agent.activeForegroundTurnId &&
+      !agent.pendingReplacement &&
+      !this.hasRefusedAutonomousCancellation(agent.id, eventTurnId)
+    ) {
       agent.lifecycle = "idle";
     }
     agent.lastError = undefined;
