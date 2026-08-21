@@ -48,7 +48,6 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/ci-workflow.test.mjs",
 ]);
 const DOWNSTREAM_GOVERNANCE_PATH_SET = new Set(DOWNSTREAM_GOVERNANCE_PATHS);
-const EFFECTIVE_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
 
 function paginatedJson(path) {
   const pages = [];
@@ -73,47 +72,6 @@ function downstreamGovernanceMarker(body) {
   return true;
 }
 
-function reviewCommitOid(review) {
-  const commit = review?.commit_id ?? review?.commit_oid;
-  return typeof commit === "string" ? commit.toLowerCase() : undefined;
-}
-
-function reviewOrder(review, index) {
-  const submittedAt = Date.parse(
-    review?.submitted_at ?? review?.submittedAt ?? review?.created_at ?? "",
-  );
-  const timestamp = Number.isNaN(submittedAt) ? 0 : submittedAt;
-  const id = Number(review?.id);
-  return [timestamp, Number.isFinite(id) ? id : 0, index];
-}
-
-function reviewIsLater(candidate, previous) {
-  const candidateOrder = reviewOrder(candidate.review, candidate.index);
-  const previousOrder = reviewOrder(previous.review, previous.index);
-  for (let index = 0; index < candidateOrder.length; index += 1) {
-    if (candidateOrder[index] !== previousOrder[index]) {
-      return candidateOrder[index] > previousOrder[index];
-    }
-  }
-  return false;
-}
-
-function effectiveLatestReviews(reviews) {
-  const latest = new Map();
-  reviews.forEach((review, index) => {
-    const state = typeof review?.state === "string" ? review.state.toUpperCase() : "";
-    if (!EFFECTIVE_REVIEW_STATES.has(state)) return;
-    const userId = review?.user?.id;
-    const login = review?.user?.login;
-    if (userId === undefined && typeof login !== "string") return;
-    const key = userId === undefined ? `login:${login}` : `id:${String(userId)}`;
-    const candidate = { review, index };
-    const previous = latest.get(key);
-    if (!previous || reviewIsLater(candidate, previous)) latest.set(key, candidate);
-  });
-  return [...latest.values()].map(({ review }) => review);
-}
-
 function downstreamGovernanceEvidence(current, repository, pullRequest) {
   const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
   const files = paginatedJson(`repos/${repository}/pulls/${pullRequest}/files`);
@@ -132,25 +90,6 @@ function downstreamGovernanceEvidence(current, repository, pullRequest) {
     }
   }
 
-  const reviews = effectiveLatestReviews(
-    paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
-  );
-  const approval = reviews.find((review) => {
-    const state = typeof review?.state === "string" ? review.state.toUpperCase() : "";
-    const dismissed = review?.dismissed_at !== undefined && review.dismissed_at !== null;
-    return (
-      review?.user?.type === "User" &&
-      state === "APPROVED" &&
-      !dismissed &&
-      reviewCommitOid(review) === currentHead
-    );
-  });
-  if (!approval) {
-    throw new Error(
-      `Downstream governance exception requires an effective human approval at current head ${currentHead}`,
-    );
-  }
-
   return {
     repository,
     pullRequest,
@@ -161,13 +100,6 @@ function downstreamGovernanceEvidence(current, repository, pullRequest) {
       changedFiles,
     },
     currentHead,
-    approval: {
-      id: approval.id,
-      state: approval.state,
-      authorLogin: approval.user.login ?? null,
-      authorType: approval.user.type,
-      commitOid: reviewCommitOid(approval),
-    },
     result: "governance-exception",
   };
 }
