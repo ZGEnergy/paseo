@@ -124,7 +124,7 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
 });
-test("governance exceptions enforce phase-specific human approval evidence", () => {
+test("feature exceptions enforce phase-specific human approval evidence", () => {
   const provenance = readFileSync(provenanceScriptPath, "utf8");
 
   assert.match(provenance, /pulls\/\$\{pullRequest\}\/reviews/);
@@ -133,6 +133,16 @@ test("governance exceptions enforce phase-specific human approval evidence", () 
   assert.match(provenance, /phase: "post-merge"/);
   assert.match(provenance, /evidenceType: "human-merger"/);
   assert.match(provenance, /non-author human approval of the current pull request head/);
+});
+
+test("governance exceptions do not require human approval", () => {
+  const provenance = readFileSync(provenanceScriptPath, "utf8");
+
+  assert.match(provenance, /mode === "downstream-feature"/);
+  assert.doesNotMatch(
+    provenance,
+    /Downstream exception requires a non-author human approval of the current pull request head/,
+  );
 });
 
 test("provenance closed events require a merge and CI covers internal release pushes", () => {
