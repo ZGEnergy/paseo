@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import path from "node:path";
 import {
   bootstrapLocalDaemon,
   upgradeLocalDaemon,
@@ -92,6 +93,7 @@ function createDependencies(
     },
     daemon: {
       readPidLock: async () => lock,
+      endpointReachable: async () => false,
       isPidRunning: (pid: number) => pid === runningPid,
       stop: async () => {
         events.push("stop");
@@ -360,6 +362,56 @@ describe("local daemon upgrade transaction", () => {
     expect(error.details.logPath).toBe("/tmp/paseo/daemon.log");
   });
 
+  test("does not stop a concurrent replacement after preflight ownership changes", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    let reads = 0;
+    const replacement: PidLockInfo = {
+      pid: 303,
+      startedAt: "2026-08-21T00:02:00.000Z",
+      hostname: "test",
+      uid: 1,
+      listen: descriptor.listen,
+      lifecycle: { ...lifecycle, serverId: "replacement" },
+    };
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      readPidLock: async () => {
+        reads += 1;
+        return reads === 1
+          ? await createDependencies([]).daemon!.readPidLock("/tmp/paseo")
+          : replacement;
+      },
+      isPidRunning: (pid) => pid === 101 || pid === 303,
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout" }, dependencies),
+    ).rejects.toThrow("daemon lifecycle lock changed before stop");
+    expect(events).not.toContain("stop");
+  });
+
+  test("waits for endpoint release after the PID lock disappears", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    let endpointCalls = 0;
+    let now = 0;
+    dependencies.now = () => now;
+    dependencies.sleep = async (ms) => {
+      now += ms;
+    };
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      endpointReachable: async () => {
+        endpointCalls += 1;
+        return endpointCalls === 1;
+      },
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout" }, dependencies),
+    ).resolves.toMatchObject({ observed: { pid: 202 } });
+    expect(endpointCalls).toBeGreaterThanOrEqual(2);
+  });
+
   test("fails closed for a missing staged executable before stopping", async () => {
     const events: string[] = [];
     const dependencies = createDependencies(events);
@@ -396,6 +448,51 @@ describe("local daemon upgrade transaction", () => {
     await expect(
       upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout" }, dependencies),
     ).resolves.toMatchObject({ observed: { pid: 202 } });
+  });
+
+  test("restores links from a stale activation journal before a new upgrade", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    const releaseDir = path.join(
+      process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "/tmp", ".local", "share"),
+      "paseo",
+      "releases",
+    );
+    const stalePayload = JSON.stringify({
+      pid: 2_000_000_000,
+      startedAt: 1,
+      phase: "switched",
+      releaseDir,
+      home: "/tmp/paseo",
+      currentBefore: "roots/old-revision",
+      previousBefore: null,
+      oldPid: 101,
+      oldServerId: "server-1",
+    });
+    let lockReads = 0;
+    const originalSymlink = dependencies.fs!.symlink;
+    dependencies.fs = {
+      ...dependencies.fs,
+      writeFile: vi.fn(async (_file, _data, options) => {
+        if (options?.flag === "wx" && lockReads === 0) {
+          const error = new Error("exists") as Error & { code?: string };
+          error.code = "EEXIST";
+          throw error;
+        }
+      }),
+      readFile: vi.fn(async () => {
+        lockReads += 1;
+        return lockReads <= 2 ? stalePayload : "";
+      }),
+      symlink: vi.fn(async (target, value) => {
+        events.push(`link:${target}`);
+        return originalSymlink(target, value);
+      }),
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout" }, dependencies),
+    ).resolves.toMatchObject({ observed: { pid: 202 } });
+    expect(events).toContain("link:roots/old-revision");
   });
 
   test("keeps an upgrade lock owned by a live process", async () => {

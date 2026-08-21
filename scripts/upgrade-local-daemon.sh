@@ -28,16 +28,22 @@ if [[ -z "$closure_root" || "$closure_root" != /* || ! -x "$closure_root/bin/pas
   exit 1
 fi
 
+subcommand=upgrade-local
+if [[ "${1:-}" == "--bootstrap" ]]; then
+  subcommand=bootstrap-upgrade
+  shift
+fi
+
 PASEO_SOURCE_REVISION="$revision" \
 PASEO_CLOSURE_ROOT="$closure_root" \
-"$closure_root/bin/paseo" daemon upgrade-local \
+"$closure_root/bin/paseo" daemon "$subcommand" \
   --checkout "$checkout" \
   --revision "$revision" \
   --staged-root "$closure_root" \
   "$@"
 
 launcher_dir=${XDG_BIN_HOME:-${HOME:?HOME is required}/.local/bin}
-case ":${PATH:-}:" in
-  *:"$launcher_dir":*) ;;
-  *) echo "warning: $launcher_dir is not first on PATH; stable paseo launcher may not be selected" >&2 ;;
-esac
+first_path=${PATH%%:*}
+if [[ "$first_path" != "$launcher_dir" ]]; then
+  echo "warning: $launcher_dir is not first on PATH; stable paseo launcher may not be selected" >&2
+fi

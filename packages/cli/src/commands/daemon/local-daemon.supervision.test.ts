@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -199,6 +199,18 @@ describe("local daemon launch supervision", () => {
     expect(launch?.options?.env?.PASEO_RELAY_USE_TLS).toBe("true");
   });
 
+  test("false relay TLS is passed explicitly to the supervised daemon", () => {
+    const runtime = new FakeDaemonRuntime();
+    const status = startLocalDaemonForeground(
+      { home: "/tmp/paseo-test", relayUseTls: false },
+      runtime,
+    );
+    expect(status).toBe(0);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.args).toContain("--no-relay-use-tls");
+    expect(launch?.options?.env?.PASEO_RELAY_USE_TLS).toBe("false");
+  });
+
   test("web UI flag is passed to the supervised daemon", async () => {
     const runtime = new FakeDaemonRuntime();
 
@@ -294,5 +306,25 @@ describe("local daemon launch supervision", () => {
       webUiEnabled: true,
       hostnames: true,
     });
+  });
+
+  test("derives rooted lifecycle metadata for ordinary packaged starts", async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-rooted-metadata-"));
+    tempRoots.push(root);
+    const dataHome = path.join(root, "data");
+    const releases = path.join(dataHome, "paseo", "releases");
+    await mkdir(releases, { recursive: true });
+    await symlink("roots/rooted-revision", path.join(releases, "current"));
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_DATA_HOME", dataHome);
+    const runtime = new FakeDaemonRuntime();
+    runtime.runnerEntry = "/nix/store/hash-paseo/lib/paseo/server-entry.js";
+    const resultPromise = startLocalDaemonDetached({ home: path.join(root, ".paseo") }, runtime);
+    await vi.advanceTimersByTimeAsync(1200);
+    await resultPromise;
+    const env = runtime.recordedLaunches[0]?.options?.env;
+    expect(env?.PASEO_LIFECYCLE_SOURCE_REVISION).toBe("rooted-revision");
+    expect(env?.PASEO_LIFECYCLE_CLOSURE_ROOT).toBe("/nix/store/hash-paseo");
   });
 });

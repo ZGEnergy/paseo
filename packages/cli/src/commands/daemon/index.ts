@@ -47,12 +47,37 @@ export function createDaemonCommand(): Command {
       "Listen target for restarted daemon (host:port, port, or unix socket)",
     )
     .option("--port <port>", "Port for restarted daemon listen target")
-    .option("--relay", "Enable relay on restarted daemon")
-    .option("--no-relay", "Disable relay on restarted daemon")
-    .option("--no-mcp", "Disable Agent MCP on restarted daemon")
-    .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
-    .option("--web-ui", "Enable the bundled daemon web UI on restarted daemon")
-    .option("--no-web-ui", "Disable the bundled daemon web UI on restarted daemon")
+    .addOption(
+      new Option("--relay-use-tls", "Use wss:// for relay on restarted daemon").default(undefined),
+    )
+    .addOption(
+      new Option("--no-relay-use-tls", "Use ws:// for relay on restarted daemon").default(
+        undefined,
+      ),
+    )
+    .addOption(new Option("--mcp", "Enable Agent MCP on restarted daemon").default(undefined))
+    .addOption(new Option("--no-mcp", "Disable Agent MCP on restarted daemon").default(undefined))
+    .addOption(
+      new Option("--inject-mcp", "Enable auto-injecting the Paseo MCP into created agents").default(
+        undefined,
+      ),
+    )
+    .addOption(
+      new Option(
+        "--no-inject-mcp",
+        "Disable auto-injecting the Paseo MCP into created agents",
+      ).default(undefined),
+    )
+    .addOption(
+      new Option("--web-ui", "Enable the bundled daemon web UI on restarted daemon").default(
+        undefined,
+      ),
+    )
+    .addOption(
+      new Option("--no-web-ui", "Disable the bundled daemon web UI on restarted daemon").default(
+        undefined,
+      ),
+    )
     .option(
       "--hostnames <hosts>",
       'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',

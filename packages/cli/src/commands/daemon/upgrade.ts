@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import type { CommandOptions, OutputSchema, SingleResult } from "../../output/index.js";
 import { withOutput } from "../../output/index.js";
+import { addJsonOption } from "../../utils/command-options.js";
 import {
   bootstrapLocalDaemon,
   installStableLauncher,
@@ -65,12 +66,25 @@ function parseBooleanOption(value: string | undefined, name: string): boolean {
 }
 
 function parseHostnamesOption(value: string | undefined): true | string[] | null {
-  if (value === undefined) return null;
-  if (value.toLowerCase() === "true") return true;
-  return value
+  const raw = requireOption(value, "--hostnames");
+  const normalized = raw.toLowerCase();
+  if (!normalized || ["false", "none", "null", "off", "disabled"].includes(normalized)) return null;
+  if (normalized === "true") return true;
+  return raw
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+async function installStableLauncherNonFatal(value: LocalUpgradeResult): Promise<void> {
+  try {
+    await installStableLauncher(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `warning: daemon upgraded, but stable paseo launcher was not installed: ${message}`,
+    );
+  }
 }
 
 function result(value: LocalUpgradeResult): SingleResult<LocalUpgradeResult> {
@@ -88,7 +102,7 @@ export async function runUpgradeLocalCommand(
     stagedRoot: options.stagedRoot,
     timeoutMs: parseTimeout(options.timeout),
   });
-  await installStableLauncher(value);
+  await installStableLauncherNonFatal(value);
   return result(value);
 }
 
@@ -113,45 +127,49 @@ export async function runBootstrapUpgradeCommand(
     timeoutMs: parseTimeout(options.timeout),
     descriptor,
   });
-  await installStableLauncher(value);
+  await installStableLauncherNonFatal(value);
   return result(value);
 }
 
 export function upgradeLocalCommand(): Command {
-  return new Command("upgrade-local")
-    .description("Upgrade a CLI-managed local daemon through a rooted Nix closure")
-    .option("--checkout <path>", "Clean internal/main checkout", process.cwd())
-    .option("--revision <revision>", "Expected checkout revision")
-    .option("--staged-root <path>", "Already-built staged Nix closure root")
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
-    .option("--timeout <seconds>", "Health timeout in seconds (default: 30)")
-    .action(
-      withOutput((...args) => {
-        const [options] = args.slice(-2) as [UpgradeCommandOptions, Command];
-        return runUpgradeLocalCommand(options);
-      }),
-    );
+  return addJsonOption(
+    new Command("upgrade-local")
+      .description("Upgrade a CLI-managed local daemon through a rooted Nix closure")
+      .option("--checkout <path>", "Clean internal/main checkout", process.cwd())
+      .option("--revision <revision>", "Expected checkout revision")
+      .option("--staged-root <path>", "Already-built staged Nix closure root")
+      .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+      .option("--timeout <seconds>", "Health timeout in seconds (default: 30)")
+      .action(
+        withOutput((...args) => {
+          const [options] = args.slice(-2) as [UpgradeCommandOptions, Command];
+          return runUpgradeLocalCommand(options);
+        }),
+      ),
+  );
 }
 
 export function bootstrapUpgradeCommand(): Command {
-  return new Command("bootstrap-upgrade")
-    .description("Bootstrap a legacy daemon with explicit launch values")
-    .requiredOption("--listen <listen>", "Explicit listen target")
-    .requiredOption("--relay <true|false>", "Explicit relay setting")
-    .requiredOption("--relay-use-tls <true|false>", "Explicit relay TLS setting")
-    .requiredOption("--mcp <true|false>", "Explicit Agent MCP setting")
-    .requiredOption("--inject-mcp <true|false>", "Explicit MCP injection setting")
-    .requiredOption("--web-ui <true|false>", "Explicit web UI setting")
-    .requiredOption("--hostnames <hosts>", "Explicit hostnames, or true")
-    .option("--checkout <path>", "Clean internal/main checkout", process.cwd())
-    .option("--revision <revision>", "Expected checkout revision")
-    .option("--staged-root <path>", "Already-built staged Nix closure root")
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
-    .option("--timeout <seconds>", "Health timeout in seconds (default: 30)")
-    .action(
-      withOutput((...args) => {
-        const [options] = args.slice(-2) as [BootstrapCommandOptions, Command];
-        return runBootstrapUpgradeCommand(options);
-      }),
-    );
+  return addJsonOption(
+    new Command("bootstrap-upgrade")
+      .description("Bootstrap a legacy daemon with explicit launch values")
+      .requiredOption("--listen <listen>", "Explicit listen target")
+      .requiredOption("--relay <true|false>", "Explicit relay setting")
+      .requiredOption("--relay-use-tls <true|false>", "Explicit relay TLS setting")
+      .requiredOption("--mcp <true|false>", "Explicit Agent MCP setting")
+      .requiredOption("--inject-mcp <true|false>", "Explicit MCP injection setting")
+      .requiredOption("--web-ui <true|false>", "Explicit web UI setting")
+      .requiredOption("--hostnames <hosts>", "Explicit hostnames, false/none, or true")
+      .option("--checkout <path>", "Clean internal/main checkout", process.cwd())
+      .option("--revision <revision>", "Expected checkout revision")
+      .option("--staged-root <path>", "Already-built staged Nix closure root")
+      .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+      .option("--timeout <seconds>", "Health timeout in seconds (default: 30)")
+      .action(
+        withOutput((...args) => {
+          const [options] = args.slice(-2) as [BootstrapCommandOptions, Command];
+          return runBootstrapUpgradeCommand(options);
+        }),
+      ),
+  );
 }

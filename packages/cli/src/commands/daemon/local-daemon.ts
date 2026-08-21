@@ -1,5 +1,5 @@
 import { spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -152,6 +152,9 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.relayUseTls === true) {
     args.push("--relay-use-tls");
   }
+  if (options.relayUseTls === false) {
+    args.push("--no-relay-use-tls");
+  }
 
   if (options.mcp === true) {
     args.push("--mcp");
@@ -182,8 +185,10 @@ function applyLaunchEnvironment(options: DaemonStartOptions, childEnv: NodeJS.Pr
   } else if (options.port) {
     childEnv.PASEO_LISTEN = `127.0.0.1:${options.port}`;
   }
-  if (options.hostnames) childEnv.PASEO_HOSTNAMES = options.hostnames;
-  if (options.relayUseTls === true) childEnv.PASEO_RELAY_USE_TLS = "true";
+  if (options.hostnames !== undefined) {
+    childEnv.PASEO_HOSTNAMES = options.hostnames.trim() || "false";
+  }
+  if (options.relayUseTls !== undefined) childEnv.PASEO_RELAY_USE_TLS = String(options.relayUseTls);
   if (options.webUi !== undefined) childEnv.PASEO_WEB_UI_ENABLED = String(options.webUi);
 }
 
@@ -191,9 +196,11 @@ function resolveLaunchHostnames(
   raw: string | undefined,
   configured: CliLaunchDescriptor["hostnames"],
 ): CliLaunchDescriptor["hostnames"] {
-  const hostnames = raw?.trim();
-  if (!hostnames) return configured ?? null;
-  if (hostnames.toLowerCase() === "true") return true;
+  if (raw === undefined) return configured ?? null;
+  const hostnames = raw.trim();
+  const normalized = hostnames.toLowerCase();
+  if (!hostnames || ["false", "none", "null", "off", "disabled"].includes(normalized)) return null;
+  if (normalized === "true") return true;
   return hostnames
     .split(",")
     .map((value) => value.trim())
@@ -224,6 +231,30 @@ function buildLaunchDescriptor(
   };
 }
 
+function resolveReleasesPath(home: string, env: NodeJS.ProcessEnv): string {
+  const dataHome = env.XDG_DATA_HOME?.trim() || path.join(env.HOME || home, ".local", "share");
+  return path.join(dataHome, "paseo", "releases");
+}
+
+function deriveRootedSourceRevision(home: string, env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const current = readlinkSync(path.join(resolveReleasesPath(home, env), "current"));
+    const revision = path.basename(current);
+    return revision && revision !== "." ? revision : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function deriveNixClosureRoot(runnerEntry: string): string | undefined {
+  const marker = `${path.sep}nix${path.sep}store${path.sep}`;
+  const index = runnerEntry.indexOf(marker);
+  if (index < 0) return undefined;
+  const rest = runnerEntry.slice(index + marker.length);
+  const name = rest.split(path.sep)[0];
+  return name ? path.join(path.sep, "nix", "store", name) : undefined;
+}
+
 function buildChildEnv(options: DaemonStartOptions, runnerEntry: string): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   applyLaunchEnvironment(options, childEnv);
@@ -233,9 +264,15 @@ function buildChildEnv(options: DaemonStartOptions, runnerEntry: string): NodeJS
   childEnv.PASEO_LIFECYCLE_MANAGER = "cli";
   childEnv.PASEO_LIFECYCLE_DESCRIPTOR = JSON.stringify(descriptor);
   childEnv.PASEO_LIFECYCLE_SOURCE_REVISION =
-    options.sourceRevision ?? childEnv.PASEO_SOURCE_REVISION ?? "local";
+    options.sourceRevision ??
+    childEnv.PASEO_SOURCE_REVISION ??
+    deriveRootedSourceRevision(paseoHome, childEnv) ??
+    "local";
   childEnv.PASEO_LIFECYCLE_CLOSURE_ROOT =
-    options.closureRoot ?? childEnv.PASEO_CLOSURE_ROOT ?? path.dirname(runnerEntry);
+    options.closureRoot ??
+    childEnv.PASEO_CLOSURE_ROOT ??
+    deriveNixClosureRoot(runnerEntry) ??
+    path.dirname(runnerEntry);
   return childEnv;
 }
 

@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import {
+  resolveLocalDaemonState,
   startLocalDaemonDetached,
   stopLocalDaemon,
   DEFAULT_STOP_TIMEOUT_MS,
@@ -59,6 +60,7 @@ function toStartOptions(options: CommandOptions): DaemonStartOptions {
     listen: typeof options.listen === "string" ? options.listen : undefined,
     port: typeof options.port === "string" ? options.port : undefined,
     relay: typeof options.relay === "boolean" ? options.relay : undefined,
+    relayUseTls: typeof options.relayUseTls === "boolean" ? options.relayUseTls : undefined,
     mcp: typeof options.mcp === "boolean" ? options.mcp : undefined,
     injectMcp: typeof options.injectMcp === "boolean" ? options.injectMcp : undefined,
     webUi: typeof options.webUi === "boolean" ? options.webUi : undefined,
@@ -83,8 +85,12 @@ export async function runRestartCommand(
   const timeoutMs = parseTimeoutMs(options.timeout);
   const force = options.force === true;
   const startOptions = toStartOptions(options);
-
   try {
+    const previous = resolveLocalDaemonState({ home: startOptions.home }).pidInfo?.lifecycle;
+    if (previous) {
+      startOptions.sourceRevision = previous.sourceRevision;
+      startOptions.closureRoot = previous.closureRoot;
+    }
     let stopResult: Awaited<ReturnType<typeof stopLocalDaemon>>;
     try {
       stopResult = await stopLocalDaemon({

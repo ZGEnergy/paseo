@@ -22,7 +22,18 @@ export function startCommand(): Command {
     .option("--foreground", "Run in foreground (don't daemonize)")
     .addOption(new Option("--relay", "Enable relay connection").default(undefined))
     .addOption(new Option("--no-relay", "Disable relay connection").default(undefined))
-    .option("--relay-use-tls", "Use wss:// for the relay connection and pairing offers")
+    .addOption(
+      new Option(
+        "--relay-use-tls",
+        "Use wss:// for the relay connection and pairing offers",
+      ).default(undefined),
+    )
+    .addOption(
+      new Option(
+        "--no-relay-use-tls",
+        "Use ws:// for the relay connection and pairing offers",
+      ).default(undefined),
+    )
     .addOption(new Option("--mcp", "Enable the Agent MCP HTTP endpoint").default(undefined))
     .addOption(new Option("--no-mcp", "Disable the Agent MCP HTTP endpoint").default(undefined))
     .addOption(
