@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type {
@@ -541,13 +541,28 @@ describe("OMP agent client and session", () => {
     const scheduler = createOmpProviderIdleScheduler();
 
     await expect(
-      scheduler.waitForRetry({ attempt: 1, consecutiveFailures: 0, elapsedMs: 0 }),
+      scheduler.waitForRetry({
+        attempt: 1,
+        consecutiveFailures: 0,
+        elapsedMs: 0,
+        isCompacting: false,
+      }),
     ).resolves.toEqual({ retry: true });
     await expect(
-      scheduler.waitForRetry({ attempt: 200, consecutiveFailures: 0, elapsedMs: 60_000 }),
+      scheduler.waitForRetry({
+        attempt: 200,
+        consecutiveFailures: 0,
+        elapsedMs: 60_000,
+        isCompacting: false,
+      }),
     ).resolves.toEqual({ retry: false, reason: "wait_budget" });
     await expect(
-      scheduler.waitForRetry({ attempt: 3, consecutiveFailures: 3, elapsedMs: 100 }),
+      scheduler.waitForRetry({
+        attempt: 3,
+        consecutiveFailures: 3,
+        elapsedMs: 100,
+        isCompacting: false,
+      }),
     ).resolves.toEqual({ retry: false, reason: "failure_budget" });
   });
 
@@ -575,6 +590,129 @@ describe("OMP agent client and session", () => {
     await expect(completion).rejects.toThrow(/idle/i);
 
     expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("does not fail a turn that started after the gate was abandoned", async () => {
+    // The deny lands after ownership has moved on: get_state and waitForRetry are
+    // both awaits, so the turn can change under a parked gate.
+    let releaseDeny!: () => void;
+    let gateParked!: () => void;
+    const parked = new Promise<void>((resolve) => {
+      gateParked = resolve;
+    });
+    const scheduler: OmpProviderIdleScheduler = {
+      waitForRetry: () => {
+        gateParked();
+        return new Promise((resolve) => {
+          releaseDeny = () => resolve({ retry: false, reason: "wait_budget" });
+        });
+      },
+    };
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await parked;
+
+    // The user gives up on the stuck turn and sends another one.
+    await omp.interrupt();
+    await completion;
+    omp.reportProviderState({ isStreaming: false, isCompacting: false });
+    await omp.requireStartTurn("second");
+
+    releaseDeny();
+    for (let flush = 0; flush < 5; flush += 1) await waitForImmediate();
+
+    expect(omp.failedTurns()).toEqual([]);
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("second done");
+    runtime.finishTurn();
+    for (let flush = 0; flush < 5; flush += 1) await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("keeps polling past the idle budget while OMP reports compacting", async () => {
+    const scheduler = createOmpProviderIdleScheduler();
+
+    await expect(
+      scheduler.waitForRetry({
+        attempt: 1,
+        consecutiveFailures: 0,
+        elapsedMs: 120_000,
+        isCompacting: true,
+      }),
+    ).resolves.toEqual({ retry: true });
+    await expect(
+      scheduler.waitForRetry({
+        attempt: 1,
+        consecutiveFailures: 0,
+        elapsedMs: 120_000,
+        isCompacting: false,
+      }),
+    ).resolves.toEqual({ retry: false, reason: "wait_budget" });
+  });
+
+  test("reports the observed compaction state and elapsed time to the scheduler", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: false,
+      isCompacting: true,
+    });
+    await scheduler.waitForWaits(1);
+    expect(scheduler.attempts()[0]?.isCompacting).toBe(true);
+
+    await delay(5);
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.elapsedMs).toBeGreaterThan(0);
+  });
+
+  test("keeps an earlier agent_end error when a later cycle reports none", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    omp.runtime().finishTurn({ role: "assistant", content: [], errorMessage: "provider exploded" });
+    omp.runtime().finishTurn();
+    for (let flush = 0; flush < 5; flush += 1) await waitForImmediate();
+
+    omp.reportProviderState({ isStreaming: false, isCompacting: false });
+    scheduler.retryAll();
+
+    await expect(completion).rejects.toThrow(/provider exploded/);
+  });
+
+  test("reports an unavailable state path when no OMP state was ever observed", async () => {
+    const scheduler = new ManualIdleScheduler((attempt) =>
+      attempt.attempt < 2 ? { retry: true } : { retry: false, reason: "wait_budget" },
+    );
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+    omp.failProviderStateChecks(new Error("state unavailable"));
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    scheduler.retryAll();
+
+    await expect(completion).rejects.toThrow(/state/i);
+    expect(omp.failedTurns()).toMatchObject([{ code: "omp_provider_state_unavailable" }]);
+    expect(omp.failedTurns()[0]?.diagnostic).not.toContain("after 0 consecutive failures");
   });
 
   // #2232: parent model loop can go idle while OMP-internal `task` children
