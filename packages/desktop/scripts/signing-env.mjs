@@ -18,6 +18,17 @@
  *     an ad-hoc signature, which is what a local build wants anyway: the bundle
  *     runs on this machine and is not distributable either way.
  *
+ * An ad-hoc bundle also has to drop the hardened runtime. Hardened runtime turns
+ * on library validation, which requires every loaded library to share a Team ID
+ * with the main executable, and an ad-hoc signature has no Team ID at all. The
+ * build still succeeds; the app then dies at launch before running any code:
+ *
+ *   Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+ *   ... mapping process and mapped file (non-platform) have different Team IDs
+ *
+ * The release builds keep hardened runtime, since they sign with a real
+ * identity and notarization requires it.
+ *
  * Non-darwin hosts are left untouched; the hang is specific to the macOS
  * keychain, and Windows signing is driven by CSC_LINK rather than discovery.
  */
@@ -40,10 +51,19 @@ export function resolveSigningPlan({ env = {}, platform = process.platform, argv
   // Only add the flag when the caller has not spoken about it, so that a
   // forwarded -c.mac.notarize wins instead of colliding into a yargs array.
   const callerSetNotarize = argv.some((arg) => arg.startsWith("-c.mac.notarize"));
+  const callerSetHardenedRuntime = argv.some((arg) => arg.startsWith("-c.mac.hardenedRuntime"));
+
+  const extraArgs = [];
+  if (!callerSetNotarize) {
+    extraArgs.push("-c.mac.notarize=false");
+  }
+  if (!callerSetHardenedRuntime) {
+    extraArgs.push("-c.mac.hardenedRuntime=false");
+  }
 
   return {
     disableAutoDiscovery: true,
-    extraArgs: callerSetNotarize ? [] : ["-c.mac.notarize=false"],
+    extraArgs,
     reason: "no-identity-configured",
   };
 }

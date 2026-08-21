@@ -50,6 +50,22 @@ failing. `packages/desktop/scripts/signing-env.mjs` forces
 `CSC_IDENTITY_AUTO_DISCOVERY=false` whenever no certificate was configured, so
 the keychain is never consulted by accident.
 
+An ad-hoc build also drops the hardened runtime (`-c.mac.hardenedRuntime=false`,
+added by the same script). Hardened runtime turns on library validation, which
+requires every loaded library to share a Team ID with the main executable, and
+an ad-hoc signature has no Team ID. Leaving it on packages a bundle that builds
+fine and then dies at launch, before any app code runs:
+
+```
+Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+... mapping process and mapped file (non-platform) have different Team IDs
+```
+
+If you hit that crash, you are running a bundle signed ad-hoc with the hardened
+runtime still on — rebuild rather than re-signing the app in place, or the
+`.dmg` and `.zip` keep the broken signature. Release builds keep hardened
+runtime; they sign with a real identity, and notarization requires it.
+
 To sign a local build with a real Developer ID in your keychain, opt in
 explicitly:
 

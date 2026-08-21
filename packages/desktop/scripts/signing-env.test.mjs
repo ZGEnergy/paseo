@@ -61,6 +61,29 @@ describe("resolveSigningPlan", () => {
     });
 
     expect(plan.disableAutoDiscovery).toBe(true);
+    expect(plan.extraArgs).not.toContain("-c.mac.notarize=false");
+  });
+
+  it("disables hardened runtime so the ad-hoc bundle can launch", () => {
+    const plan = resolveSigningPlan({ env: {}, platform: "darwin" });
+
+    expect(plan.extraArgs).toContain("-c.mac.hardenedRuntime=false");
+  });
+
+  it("does not duplicate a hardenedRuntime flag the caller already passed", () => {
+    const plan = resolveSigningPlan({
+      env: {},
+      platform: "darwin",
+      argv: ["-c.mac.hardenedRuntime=true"],
+    });
+
+    expect(plan.disableAutoDiscovery).toBe(true);
+    expect(plan.extraArgs).not.toContain("-c.mac.hardenedRuntime=false");
+  });
+
+  it("leaves hardened runtime alone when a real certificate is supplied", () => {
+    const plan = resolveSigningPlan({ env: { CSC_LINK: "base64-cert" }, platform: "darwin" });
+
     expect(plan.extraArgs).toEqual([]);
   });
 });
