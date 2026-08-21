@@ -148,6 +148,8 @@ export interface OmpProviderIdleAttempt {
   elapsedMs: number;
   /** Whether the last observed state reported compaction in progress. */
   isCompacting: boolean;
+  /** Whether a current get_subagents reply still reports running children. */
+  isWaitingOnSubagents: boolean;
 }
 
 /**
@@ -242,9 +244,22 @@ function ompProviderIdleRetryDelayMs(attempt: number): number {
 
 export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
-    waitForRetry: async ({ attempt, consecutiveFailures, elapsedMs, isCompacting }) => {
+    waitForRetry: async ({
+      attempt,
+      consecutiveFailures,
+      elapsedMs,
+      isCompacting,
+      isWaitingOnSubagents,
+    }) => {
       if (consecutiveFailures >= OMP_PROVIDER_IDLE_FAILURE_BUDGET) {
         return { retry: false, reason: "failure_budget" };
+      }
+      // A current snapshot reporting running children is positive evidence that
+      // OMP is working, and a fan-out has no bounded length. Stale evidence is
+      // not: the budget resumes as soon as get_subagents stops answering.
+      if (isWaitingOnSubagents) {
+        await delay(ompProviderIdleRetryDelayMs(attempt));
+        return { retry: true };
       }
       const budgetMs = isCompacting
         ? OMP_PROVIDER_COMPACTING_BUDGET_MS
@@ -2313,6 +2328,7 @@ export class OmpAgentSession implements AgentSession {
       let consecutiveFailures = 0;
       let lastState: OmpSessionState | null = null;
       let lastError: unknown = null;
+      let waitingOnSubagents = false;
       while (this.ownsProviderIdleGate(turnId)) {
         attempt += 1;
         try {
@@ -2322,7 +2338,10 @@ export class OmpAgentSession implements AgentSession {
           consecutiveFailures = 0;
           // Parent model idle is not enough: OMP-internal `task` children keep
           // writing after agent_end / isStreaming=false (#2232).
-          if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
+          const modelBusy = state.isStreaming || state.isCompacting;
+          const subagents = modelBusy ? null : await this.pollOmpSubagents();
+          waitingOnSubagents = subagents ? subagents.running && subagents.fresh : false;
+          if (subagents && !subagents.running) {
             this.completeTurnIfGateOwned(turnId, gate.messages);
             return;
           }
@@ -2339,6 +2358,7 @@ export class OmpAgentSession implements AgentSession {
           consecutiveFailures,
           elapsedMs: performance.now() - startedAt,
           isCompacting: lastState?.isCompacting === true,
+          isWaitingOnSubagents: waitingOnSubagents,
         });
         if (!decision.retry) {
           if (!this.ownsProviderIdleGate(turnId)) {
@@ -2350,6 +2370,7 @@ export class OmpAgentSession implements AgentSession {
             consecutiveFailures,
             lastState,
             lastError,
+            waitingOnSubagents,
           });
           return;
         }
@@ -2361,17 +2382,23 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private async hasRunningOmpSubagents(): Promise<boolean> {
+  /**
+   * `fresh` reports whether this answer came from a snapshot OMP actually
+   * returned. The idle budget trusts running children only while it does.
+   */
+  private async pollOmpSubagents(): Promise<{ running: boolean; fresh: boolean }> {
+    let fresh = true;
     try {
       const snapshots = await this.runtimeSession.getSubagents();
       for (const event of this.subagentIndex.reconcileSnapshots(this.runtimeSession, snapshots)) {
         this.emit(event);
       }
     } catch (error) {
+      fresh = false;
       this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
     }
     this.settleDeferredTaskCalls();
-    return this.subagentIndex.hasRunning(this.runtimeSession);
+    return { running: this.subagentIndex.hasRunning(this.runtimeSession), fresh };
   }
 
   private failStalledTurn(
@@ -2382,6 +2409,7 @@ export class OmpAgentSession implements AgentSession {
       consecutiveFailures: number;
       lastState: OmpSessionState | null;
       lastError: unknown;
+      waitingOnSubagents: boolean;
     },
   ): void {
     // A hanging state path burns the wait budget before the failure budget, so a
@@ -2404,6 +2432,9 @@ export class OmpAgentSession implements AgentSession {
       details.push(
         `last get_state error${failureCount}: ${toDiagnosticErrorMessage(context.lastError)}`,
       );
+    }
+    if (context.waitingOnSubagents) {
+      details.push("OMP still reported running subagents");
     }
     const diagnostic = details.join("; ");
     this.logger.warn(
