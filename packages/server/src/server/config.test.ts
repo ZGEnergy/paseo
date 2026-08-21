@@ -58,6 +58,19 @@ describe("server config", () => {
     expect(loadConfig(paseoHome, { env: {} }).browserToolsEnabled).toBe(true);
   });
 
+  test("explicit false hostname environment clears persisted hosts", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-hostnames-disable-"));
+    roots.push(paseoHome);
+    const snapshot = {
+      version: 1 as const,
+      daemon: { hostnames: ["persisted.example"] },
+    };
+    const config = resolveConfigFromPersisted(paseoHome, snapshot, {
+      env: { PASEO_HOSTNAMES: "false" },
+    });
+    expect(config.hostnames).toBeNull();
+  });
+
   test("records mutable and startup launch overrides by persisted leaf", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-overrides-"));
     roots.push(paseoHome);

@@ -44,6 +44,12 @@ describe("hostnames (vite-style)", () => {
     expect(parseHostnamesEnv("localhost,.example.com")).toEqual(["localhost", ".example.com"]);
   });
 
+  it("parses explicit disabled hostname overrides", () => {
+    expect(parseHostnamesEnv("false")).toBeNull();
+    expect(parseHostnamesEnv("none")).toBeNull();
+    expect(mergeHostnames([["persisted.example"], null])).toBeNull();
+  });
+
   it("normalizes persisted allowedHosts into hostnames for backward compatibility", () => {
     const parsed = PersistedConfigSchema.parse({
       daemon: {
@@ -52,5 +58,15 @@ describe("hostnames (vite-style)", () => {
     });
 
     expect(parsed.daemon?.hostnames).toEqual([".example.com"]);
+  });
+
+  it("preserves explicit disabled hostnames over legacy allowedHosts", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        hostnames: null,
+        allowedHosts: ["legacy.example"],
+      },
+    });
+    expect(parsed.daemon?.hostnames).toBeNull();
   });
 });

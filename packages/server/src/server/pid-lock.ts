@@ -5,6 +5,39 @@ import { join } from "node:path";
 import { hostname } from "node:os";
 import { z } from "zod";
 
+export const cliLaunchDescriptorSchema = z.object({
+  listen: z.string().min(1),
+  relayEnabled: z.boolean(),
+  relayUseTls: z.boolean(),
+  mcpEnabled: z.boolean(),
+  mcpInjectIntoAgents: z.boolean(),
+  webUiEnabled: z.boolean(),
+  hostnames: z.union([z.literal(true), z.array(z.string()), z.null()]),
+  launchOwned: z
+    .object({
+      relayEnabled: z.boolean().optional(),
+      relayUseTls: z.boolean().optional(),
+      mcpEnabled: z.boolean().optional(),
+      mcpInjectIntoAgents: z.boolean().optional(),
+      webUiEnabled: z.boolean().optional(),
+      hostnames: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+export type CliLaunchDescriptor = z.infer<typeof cliLaunchDescriptorSchema>;
+
+export const pidLifecycleSchema = z.object({
+  version: z.literal(1),
+  manager: z.enum(["cli", "desktop", "system", "unknown"]),
+  descriptor: cliLaunchDescriptorSchema.optional(),
+  sourceRevision: z.string().min(1).optional(),
+  closureRoot: z.string().min(1).optional(),
+  serverId: z.string().min(1).optional(),
+});
+
+export type PidLifecycle = z.infer<typeof pidLifecycleSchema>;
+
 export const pidLockInfoSchema = z.object({
   pid: z.number(),
   startedAt: z.string(),
@@ -13,13 +46,71 @@ export const pidLockInfoSchema = z.object({
   listen: z.string().nullable(),
   desktopManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
+  lifecycle: pidLifecycleSchema.optional(),
 });
 
 export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
 
+export interface AcquirePidLockOptions {
+  ownerPid?: number;
+  reclaimStaleDesktopLock?: boolean;
+  lifecycle?: PidLifecycle;
+}
+
+export interface UpdatePidLockPatch {
+  listen?: string;
+  lifecycle?: PidLifecycle;
+}
+
 function parsePidLockInfo(raw: unknown): PidLockInfo | null {
   const result = pidLockInfoSchema.safeParse(raw);
   return result.success ? result.data : null;
+}
+
+export function parsePidLifecycleEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): PidLifecycle | undefined {
+  let manager = env.PASEO_LIFECYCLE_MANAGER;
+  if (env.PASEO_DESKTOP_MANAGED === "1") {
+    manager = "desktop";
+  } else if (env.PASEO_SYSTEM_MANAGED === "1") {
+    manager = "system";
+  }
+  if (manager === undefined) {
+    return undefined;
+  }
+  if (manager !== "cli" && manager !== "desktop" && manager !== "system") {
+    return { version: 1, manager: "unknown" };
+  }
+  if (manager !== "cli") {
+    return { version: 1, manager };
+  }
+
+  let descriptor: unknown;
+  try {
+    descriptor = JSON.parse(env.PASEO_LIFECYCLE_DESCRIPTOR ?? "");
+  } catch {
+    return { version: 1, manager: "unknown" };
+  }
+  const parsed = pidLifecycleSchema.safeParse({
+    version: 1,
+    manager: "cli",
+    descriptor,
+    sourceRevision: env.PASEO_LIFECYCLE_SOURCE_REVISION ?? env.PASEO_SOURCE_REVISION,
+    closureRoot: env.PASEO_LIFECYCLE_CLOSURE_ROOT ?? env.PASEO_CLOSURE_ROOT,
+  });
+  return parsed.success ? parsed.data : { version: 1, manager: "unknown" };
+}
+
+export function isAttestedCliLifecycle(lifecycle: PidLifecycle | undefined): boolean {
+  return (
+    lifecycle?.version === 1 &&
+    lifecycle.manager === "cli" &&
+    lifecycle.descriptor !== undefined &&
+    lifecycle.sourceRevision !== undefined &&
+    lifecycle.closureRoot !== undefined &&
+    lifecycle.serverId !== undefined
+  );
 }
 
 function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
@@ -85,18 +176,14 @@ function resolveOwnerPid(ownerPid?: number): number {
   return process.pid;
 }
 
-interface AcquirePidLockOptions {
-  ownerPid?: number;
-  reclaimStaleDesktopLock?: boolean;
-}
-
 function canReclaimLiveLock(
   lock: PidLockInfo,
   options: AcquirePidLockOptions | undefined,
 ): boolean {
-  // COMPAT(pidLockHeartbeat): v0.1.108 desktop startup has already confirmed the old daemon is
-  // unreachable before it launches the supervisor. Remove after 2027-01-15.
-  return options?.reclaimStaleDesktopLock === true && lock.desktopManaged === true;
+  return (
+    options?.reclaimStaleDesktopLock === true &&
+    (lock.desktopManaged === true || lock.lifecycle?.manager === "desktop")
+  );
 }
 
 function isSamePidLock(left: PidLockInfo, right: PidLockInfo): boolean {
@@ -190,7 +277,6 @@ export async function acquirePidLock(
     }
   }
 
-  // Create new lock with exclusive flag
   const lockInfo: PidLockInfo = {
     pid: lockOwnerPid,
     startedAt: new Date().toISOString(),
@@ -199,6 +285,7 @@ export async function acquirePidLock(
     listen,
     heartbeat: true,
     ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
+    ...(options?.lifecycle ? { lifecycle: options.lifecycle } : {}),
   };
 
   await writeNewPidLock(pidPath, lockInfo);
@@ -298,7 +385,7 @@ export function startPidLockHeartbeat(
 
 export async function updatePidLock(
   paseoHome: string,
-  patch: { listen: string },
+  patch: UpdatePidLockPatch,
   options?: { ownerPid?: number },
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);

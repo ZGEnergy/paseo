@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-
+import { fileURLToPath } from "node:url";
 function option(name, fallback = undefined) {
   const index = process.argv.indexOf(`--${name}`);
   return index === -1 ? fallback : process.argv[index + 1];
@@ -34,6 +34,7 @@ function ghJson(path) {
 }
 const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/check-upstream-provenance.mjs",
+  "scripts/check-upstream-provenance.test.mjs",
   "scripts/check-upstream-port.mjs",
   "scripts/check-upstream-port.test.mjs",
   "scripts/ci-workflow.test.mjs",
@@ -51,6 +52,14 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   ".claude/skills/ship/SKILL.md",
 ]);
 const DOWNSTREAM_GOVERNANCE_PATH_SET = new Set(DOWNSTREAM_GOVERNANCE_PATHS);
+const UPSTREAM_PROVENANCE_LABELS = Object.freeze([
+  "Upstream issue",
+  "Upstream pull request",
+  "Upstream head repository",
+  "Upstream head",
+  "Fork main",
+  "Reconciliation merge",
+]);
 
 function paginatedJson(path) {
   const pages = [];
@@ -64,8 +73,13 @@ function paginatedJson(path) {
   }
 }
 
+function markerLines(body, label) {
+  const pattern = new RegExp(`^${label.replaceAll(" ", "\\s+")}\\s*:`, "i");
+  return body.split(/\r?\n/).filter((line) => pattern.test(line.trim()));
+}
+
 function downstreamGovernanceMarker(body) {
-  const markers = body.split(/\r?\n/).filter((line) => line.startsWith("Downstream governance:"));
+  const markers = markerLines(body, "Downstream governance");
   if (!markers.length) return false;
   if (markers.length !== 1 || markers[0] !== "Downstream governance: true") {
     throw new Error(
@@ -75,36 +89,198 @@ function downstreamGovernanceMarker(body) {
   return true;
 }
 
-function downstreamGovernanceEvidence(current, repository, pullRequest) {
+function downstreamFeatureMarker(body) {
+  const markers = markerLines(body, "Downstream feature");
+  const rationales = markerLines(body, "Downstream rationale");
+  if (!markers.length && !rationales.length) return undefined;
+  if (markers.length !== 1 || markers[0] !== "Downstream feature: true") {
+    throw new Error(
+      "Pull request body must contain exactly `Downstream feature: true` when using downstream feature mode",
+    );
+  }
+  if (rationales.length !== 1) {
+    throw new Error(
+      "Pull request body must contain exactly one non-empty `Downstream rationale:` when using downstream feature mode",
+    );
+  }
+  if (!rationales[0].startsWith("Downstream rationale:")) {
+    throw new Error(
+      "Pull request body must use the exact `Downstream rationale:` label when using downstream feature mode",
+    );
+  }
+  const rationale = rationales[0].slice("Downstream rationale:".length).trim();
+  if (!rationale) {
+    throw new Error("Downstream rationale must be non-empty when using downstream feature mode");
+  }
+  return { rationale };
+}
+
+function validateChangedFileCount(files, expectedCount) {
+  if (!Number.isInteger(expectedCount) || files.length !== expectedCount) {
+    throw new Error(
+      "Pull request changed-files response count did not match the pull request changed_files count",
+    );
+  }
+}
+
+function metadataLine(body, label) {
+  const pattern = new RegExp(`^${label.replaceAll(" ", "\\s+")}\\s*:\\s*(.*?)\\s*$`, "im");
+  return pattern.test(body);
+}
+
+function exceptionMode(body) {
+  const governance = downstreamGovernanceMarker(body);
+  const feature = downstreamFeatureMarker(body);
+  const provenanceLabels = UPSTREAM_PROVENANCE_LABELS.filter((label) => metadataLine(body, label));
+  if (governance && feature) {
+    throw new Error("Downstream feature and downstream governance modes are mutually exclusive");
+  }
+  if ((governance || feature) && provenanceLabels.length) {
+    throw new Error(
+      `Downstream exception mode cannot include upstream provenance metadata: ${provenanceLabels.join(", ")}`,
+    );
+  }
+  if (feature) return { mode: "downstream-feature", rationale: feature.rationale };
+  if (governance) return { mode: "downstream-governance" };
+  return { mode: "upstream-import" };
+}
+
+function validateChangedPaths(paths, mode) {
+  for (const path of paths) {
+    if (
+      mode === "downstream-governance"
+        ? !DOWNSTREAM_GOVERNANCE_PATH_SET.has(path)
+        : DOWNSTREAM_GOVERNANCE_PATH_SET.has(path) || path.startsWith(".github/workflows/")
+    ) {
+      const scope =
+        mode === "downstream-governance"
+          ? "does not allow changed path"
+          : "does not allow governance or workflow path";
+      throw new Error(`Downstream ${mode.replace("downstream-", "")} exception ${scope} ${path}`);
+    }
+  }
+  return paths;
+}
+
+function changedFiles(current, repository, pullRequest, mode) {
   const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
   const files = paginatedJson(`repos/${repository}/pulls/${pullRequest}/files`);
-  const changedFiles = [];
+  validateChangedFileCount(files, current.changed_files);
+  const changed = [];
   for (const file of files) {
     const paths = [file?.filename, file?.previous_filename].filter(
       (path, index, all) => typeof path === "string" && all.indexOf(path) === index,
     );
     if (!paths.length)
       throw new Error("Pull request changed-files response contained a file without a path");
-    for (const path of paths) {
-      if (!DOWNSTREAM_GOVERNANCE_PATH_SET.has(path)) {
-        throw new Error(`Downstream governance exception does not allow changed path ${path}`);
-      }
-      changedFiles.push(path);
+    changed.push(...paths);
+  }
+  return { currentHead, changedFiles: validateChangedPaths(changed, mode) };
+}
+
+function resolveApproval(reviews, currentHead, authorLogin) {
+  const latestByReviewer = new Map();
+  for (const review of reviews) {
+    const login = review?.user?.login;
+    if (!login) continue;
+    const state = review.state?.toUpperCase();
+    if (state === "COMMENTED" || state === "PENDING") continue;
+    const key = login.toLowerCase();
+    const previous = latestByReviewer.get(key);
+    if (!previous || Number(review.id ?? 0) >= Number(previous.id ?? 0)) {
+      latestByReviewer.set(key, review);
     }
   }
+  const approval = [...latestByReviewer.values()].find(
+    (review) =>
+      review.state?.toUpperCase() === "APPROVED" &&
+      review.user?.type === "User" &&
+      authorLogin &&
+      review.user.login.toLowerCase() !== authorLogin.toLowerCase() &&
+      typeof review.commit_id === "string" &&
+      review.commit_id.toLowerCase() === currentHead,
+  );
+  if (!approval) {
+    throw new Error(
+      "Downstream feature exception requires a non-author human approval of the current pull request head",
+    );
+  }
+  return {
+    id: approval.id,
+    authorLogin: approval.user.login,
+    authorType: approval.user.type,
+    state: approval.state,
+    commitOid: approval.commit_id.toLowerCase(),
+  };
+}
 
+function mergedApproval(current) {
+  const state = current.state?.toLowerCase();
+  const isClosed = state === "closed";
+  const isMerged = current.merged === true;
+  if (isClosed && !isMerged) {
+    throw new Error(
+      "Downstream exception requires a closed and merged pull request for post-merge evidence",
+    );
+  }
+  if (isMerged && !isClosed) {
+    throw new Error(
+      "Downstream exception requires a closed and merged pull request for post-merge evidence",
+    );
+  }
+  if (!isClosed) return undefined;
+
+  const merger = current.merged_by;
+  if (!merger?.login || merger.type !== "User") {
+    throw new Error("Merged downstream exception requires a recorded human merged_by actor");
+  }
+  return {
+    phase: "post-merge",
+    evidenceType: "human-merger",
+    authorLogin: merger.login,
+    authorType: merger.type,
+  };
+}
+
+function effectiveApproval(current, repository, pullRequest) {
+  const postMergeApproval = mergedApproval(current);
+  if (postMergeApproval) return postMergeApproval;
+  const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
+  return {
+    phase: "pre-merge",
+    evidenceType: "exact-head-review",
+    ...resolveApproval(
+      paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
+      currentHead,
+      current.user?.login ?? "",
+    ),
+  };
+}
+
+function exceptionEvidence(repository, pullRequest, mode, rationale, scope, approval) {
   return {
     repository,
     pullRequest,
-    mode: "downstream-governance",
-    exception: "downstream-governance",
+    mode,
+    exception: mode,
+    ...(rationale === undefined ? {} : { rationale }),
     scope: {
-      allowlist: DOWNSTREAM_GOVERNANCE_PATHS,
-      changedFiles,
+      ...(mode === "downstream-feature"
+        ? { forbidden: ["downstream-governance allowlist", ".github/workflows/**"] }
+        : { allowlist: DOWNSTREAM_GOVERNANCE_PATHS }),
+      changedFiles: scope.changedFiles,
     },
-    currentHead,
-    result: "governance-exception",
+    currentHead: scope.currentHead,
+    ...(mode === "downstream-feature" ? { approval } : {}),
+    result: mode === "downstream-governance" ? "governance-exception" : "feature-exception",
   };
+}
+
+function downstreamExceptionEvidence(current, repository, pullRequest, mode, rationale) {
+  const scope = changedFiles(current, repository, pullRequest, mode);
+  const approval =
+    mode === "downstream-feature" ? effectiveApproval(current, repository, pullRequest) : undefined;
+  return exceptionEvidence(repository, pullRequest, mode, rationale, scope, approval);
 }
 
 function metadataValue(body, label) {
@@ -227,12 +403,43 @@ function patchIds(patch, label) {
   return ids;
 }
 
+function approvalSummary(approval) {
+  const lines = [
+    `- Approval phase: \`${approval.phase}\``,
+    `- Approval evidence: \`${approval.evidenceType}\``,
+  ];
+  if (approval.phase === "post-merge") {
+    lines.push(`- Human merger: \`${approval.authorLogin}\` (${approval.authorType})`);
+  } else {
+    lines.push(
+      `- Effective approval: review #${approval.id} by \`${approval.authorLogin}\` (${approval.authorType})`,
+      `- Review state: \`${approval.state}\``,
+      `- Review commit: \`${approval.commitOid}\` (matches current head)`,
+    );
+  }
+  return lines;
+}
+
 function writeEvidence(path, evidence) {
   if (path) {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`);
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
+    if (evidence.mode === "downstream-feature") {
+      const lines = [
+        "## Downstream feature exception evidence",
+        "",
+        `- Rationale: ${evidence.rationale}`,
+        `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
+        `- Current pull request head: \`${evidence.currentHead}\``,
+        ...approvalSummary(evidence.approval),
+        "- Result: **downstream feature exception accepted; no upstream patch equivalence asserted**",
+        "",
+      ];
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+      return;
+    }
     if (evidence.mode === "downstream-governance") {
       const lines = [
         "## Downstream governance exception evidence",
@@ -240,9 +447,7 @@ function writeEvidence(path, evidence) {
         `- Exception scope: changed files restricted to the exact governance allowlist`,
         `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
         `- Current pull request head: \`${evidence.currentHead}\``,
-        `- Effective approval: review #${evidence.approval.id} by \`${evidence.approval.authorLogin ?? "unknown"}\` (${evidence.approval.authorType})`,
-        `- Review state: \`${evidence.approval.state}\``,
-        `- Review commit: \`${evidence.approval.commitOid}\` (matches current head)`,
+
         "- Result: **downstream governance exception accepted; no upstream patch equivalence asserted**",
         "",
       ];
@@ -276,187 +481,271 @@ function writeEvidence(path, evidence) {
   }
 }
 
-try {
-  const repository = repositoryFrom(required("repository"), "Repository");
-  const currentPullRequest = Number(required("pull-request"));
-  if (!Number.isSafeInteger(currentPullRequest) || currentPullRequest < 1) {
-    throw new Error("Pull request must be a positive number");
+function validateUpstreamReferences(
+  issue,
+  upstream,
+  upstreamRepository,
+  upstreamHeadRepository,
+  upstreamHead,
+) {
+  if (issue.pull_request !== undefined) {
+    throw new Error("Upstream issue reference resolves to a pull request");
   }
-  const upstreamRepository = repositoryFrom(
-    option("upstream-repository", "getpaseo/paseo"),
-    "Upstream repository",
+  if (
+    repositoryFrom(issue.repository_url ?? "", "API upstream issue repository") !==
+    upstreamRepository
+  ) {
+    throw new Error("Upstream issue belongs to a different repository");
+  }
+  if (
+    repositoryFrom(
+      upstream.base?.repo?.full_name ?? "",
+      "Upstream pull request base repository",
+    ) !== upstreamRepository
+  ) {
+    throw new Error(`Upstream pull request must merge into ${upstreamRepository}`);
+  }
+  const actualHeadRepository = upstream.head.repo?.full_name;
+  if (
+    !actualHeadRepository ||
+    repositoryFrom(actualHeadRepository, "API upstream head repository") !== upstreamHeadRepository
+  ) {
+    throw new Error(
+      `Upstream head repository mismatch: metadata ${upstreamHeadRepository}, API ${actualHeadRepository ?? "missing"}`,
+    );
+  }
+  if (upstream.head.sha.toLowerCase() !== upstreamHead) {
+    throw new Error(`Upstream head mismatch: metadata ${upstreamHead}, API ${upstream.head.sha}`);
+  }
+}
+
+function directImportEvidence(
+  repository,
+  pullRequest,
+  upstreamRepository,
+  upstreamIssue,
+  upstreamPullRequest,
+  upstreamHeadRepository,
+  upstreamHead,
+) {
+  const forkPatchIds = patchIds(
+    ghApi(`repos/${repository}/pulls/${pullRequest}`, "application/vnd.github.patch"),
+    "Fork pull request",
   );
-  const evidencePath = option("evidence", "reconciliation-evidence.json");
-  const current = ghJson(`repos/${repository}/pulls/${currentPullRequest}`);
-  if (current.base.ref !== "internal/main") {
-    throw new Error(`Pull request must target internal/main (found ${current.base.ref})`);
+  const upstreamPatchIds = patchIds(
+    ghApi(
+      `repos/${upstreamRepository}/pulls/${upstreamPullRequest}`,
+      "application/vnd.github.patch",
+    ),
+    "Upstream pull request",
+  );
+  const patchesEquivalent =
+    forkPatchIds.length === upstreamPatchIds.length &&
+    forkPatchIds.every((id, index) => id === upstreamPatchIds[index]);
+  if (!patchesEquivalent) {
+    throw new Error(
+      `Patch equivalence failed: fork [${forkPatchIds.join(", ")}], upstream [${upstreamPatchIds.join(", ")}]`,
+    );
   }
-  if (current.head.repo?.full_name?.toLowerCase() !== repository) {
-    throw new Error("Pull request head must be a branch in the fork repository");
+  return {
+    repository,
+    pullRequest,
+    upstreamRepository,
+    upstreamIssue,
+    upstreamPullRequest,
+    upstreamHeadRepository,
+    upstreamHead,
+    mode: "direct",
+    forkPatchIds,
+    upstreamPatchIds,
+    result: "equivalent",
+  };
+}
+
+function reconciledImportEvidence(
+  current,
+  repository,
+  pullRequest,
+  upstreamRepository,
+  upstreamIssue,
+  upstreamPullRequest,
+  upstreamHeadRepository,
+  upstreamHead,
+  reconciliation,
+) {
+  const forkMain = shaFrom(reconciliation.forkMain, "Fork main");
+  const reconciliationMerge = shaFrom(reconciliation.reconciliationMerge, "Reconciliation merge");
+  const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
+  if (currentHead !== reconciliationMerge) {
+    throw new Error(
+      `Reconciliation merge mismatch: metadata ${reconciliationMerge}, pull request head ${currentHead}`,
+    );
   }
 
-  const body = current.body ?? "";
-  const downstreamGovernance = downstreamGovernanceMarker(body);
-  if (downstreamGovernance) {
-    const evidence = downstreamGovernanceEvidence(current, repository, currentPullRequest);
+  const liveMain = ghJson(`repos/${repository}/git/ref/heads/main`);
+  const liveMainSha = shaFrom(liveMain.object?.sha ?? "", "Current fork main");
+  if (liveMainSha !== forkMain) {
+    throw new Error(`Fork main mismatch: metadata ${forkMain}, current ${liveMainSha}`);
+  }
+
+  const mergeCommit = paginatedJson(`repos/${repository}/pulls/${pullRequest}/commits`).find(
+    (commit) => commit?.sha?.toLowerCase() === reconciliationMerge,
+  );
+  if (!mergeCommit) {
+    throw new Error(
+      `Reconciliation merge ${reconciliationMerge} was not found in pull request commits`,
+    );
+  }
+  const mergeParents = Array.isArray(mergeCommit.parents)
+    ? mergeCommit.parents.map((parent) => shaFrom(parent?.sha ?? "", "Reconciliation merge parent"))
+    : [];
+  if (mergeParents.length !== 2) {
+    throw new Error(
+      `Reconciliation merge must have exactly two parents (found ${mergeParents.length})`,
+    );
+  }
+  if (mergeParents[0] !== upstreamHead || mergeParents[1] !== forkMain) {
+    throw new Error(
+      `Reconciliation merge parents must be [${upstreamHead}, ${forkMain}] (found [${mergeParents.join(", ")}])`,
+    );
+  }
+
+  const reviewDiffReference = current.html_url
+    ? `${current.html_url.replace(/\/$/, "")}/files`
+    : `https://github.com/${repository}/pull/${pullRequest}/files`;
+  return {
+    repository,
+    pullRequest,
+    upstreamRepository,
+    upstreamIssue,
+    upstreamPullRequest,
+    upstreamHeadRepository,
+    upstreamHead,
+    mode: "reconciled",
+    forkMain,
+    reconciliationMerge,
+    mergeParents,
+    reviewDiffReference,
+    result: "equivalent",
+  };
+}
+
+function upstreamImportEvidence(current, repository, pullRequest, upstreamRepository, body) {
+  const upstreamIssue = referenceFrom(
+    metadata(body, "Upstream issue"),
+    "Upstream issue",
+    "issues",
+    upstreamRepository,
+  );
+  const upstreamPullRequest = referenceFrom(
+    metadata(body, "Upstream pull request"),
+    "Upstream pull request",
+    "pull",
+    upstreamRepository,
+  );
+  const upstreamHeadRepository = repositoryFrom(
+    metadata(body, "Upstream head repository"),
+    "Upstream head repository",
+  );
+  const upstreamHead = shaFrom(metadata(body, "Upstream head"));
+  const reconciliation = provenanceMetadata(body);
+  const issue = ghJson(`repos/${upstreamRepository}/issues/${upstreamIssue}`);
+  const upstream = ghJson(`repos/${upstreamRepository}/pulls/${upstreamPullRequest}`);
+  validateUpstreamReferences(
+    issue,
+    upstream,
+    upstreamRepository,
+    upstreamHeadRepository,
+    upstreamHead,
+  );
+  if (reconciliation.mode === "direct") {
+    return directImportEvidence(
+      repository,
+      pullRequest,
+      upstreamRepository,
+      upstreamIssue,
+      upstreamPullRequest,
+      upstreamHeadRepository,
+      upstreamHead,
+    );
+  }
+  return reconciledImportEvidence(
+    current,
+    repository,
+    pullRequest,
+    upstreamRepository,
+    upstreamIssue,
+    upstreamPullRequest,
+    upstreamHeadRepository,
+    upstreamHead,
+    reconciliation,
+  );
+}
+
+function run() {
+  try {
+    const repository = repositoryFrom(required("repository"), "Repository");
+    const currentPullRequest = Number(required("pull-request"));
+    if (!Number.isSafeInteger(currentPullRequest) || currentPullRequest < 1) {
+      throw new Error("Pull request must be a positive number");
+    }
+    const upstreamRepository = repositoryFrom(
+      option("upstream-repository", "getpaseo/paseo"),
+      "Upstream repository",
+    );
+    const evidencePath = option("evidence", "reconciliation-evidence.json");
+    const current = ghJson(`repos/${repository}/pulls/${currentPullRequest}`);
+    if (current.base.ref !== "internal/main") {
+      throw new Error(`Pull request must target internal/main (found ${current.base.ref})`);
+    }
+    if (current.head.repo?.full_name?.toLowerCase() !== repository) {
+      throw new Error("Pull request head must be a branch in the fork repository");
+    }
+
+    const body = current.body ?? "";
+    const selectedMode = exceptionMode(body);
+    if (selectedMode.mode !== "upstream-import") {
+      const evidence = downstreamExceptionEvidence(
+        current,
+        repository,
+        currentPullRequest,
+        selectedMode.mode,
+        selectedMode.rationale,
+      );
+      writeEvidence(evidencePath, evidence);
+      console.log(
+        `${selectedMode.mode === "downstream-feature" ? "Downstream feature" : "Downstream governance"} exception verified: ${repository}#${currentPullRequest} at ${evidence.currentHead}`,
+      );
+      return;
+    }
+
+    const evidence = upstreamImportEvidence(
+      current,
+      repository,
+      currentPullRequest,
+      upstreamRepository,
+      body,
+    );
     writeEvidence(evidencePath, evidence);
     console.log(
-      `Downstream governance exception verified: ${repository}#${currentPullRequest} at ${evidence.currentHead}`,
+      `Upstream provenance verified: ${upstreamRepository}#${evidence.upstreamPullRequest} == ${repository}#${currentPullRequest}`,
     );
+  } catch (error) {
+    console.error(`::error::${error.message}`);
+    process.exitCode = 1;
   }
-  if (!downstreamGovernance) {
-    const upstreamIssue = referenceFrom(
-      metadata(body, "Upstream issue"),
-      "Upstream issue",
-      "issues",
-      upstreamRepository,
-    );
-    const upstreamPullRequest = referenceFrom(
-      metadata(body, "Upstream pull request"),
-      "Upstream pull request",
-      "pull",
-      upstreamRepository,
-    );
-    const upstreamHeadRepository = repositoryFrom(
-      metadata(body, "Upstream head repository"),
-      "Upstream head repository",
-    );
-    const upstreamHead = shaFrom(metadata(body, "Upstream head"));
-    const reconciliation = provenanceMetadata(body);
-    const issue = ghJson(`repos/${upstreamRepository}/issues/${upstreamIssue}`);
-    const upstream = ghJson(`repos/${upstreamRepository}/pulls/${upstreamPullRequest}`);
-    if (issue.pull_request !== undefined) {
-      throw new Error("Upstream issue reference resolves to a pull request");
-    }
-    if (
-      repositoryFrom(issue.repository_url ?? "", "API upstream issue repository") !==
-      upstreamRepository
-    ) {
-      throw new Error("Upstream issue belongs to a different repository");
-    }
-    if (
-      repositoryFrom(
-        upstream.base?.repo?.full_name ?? "",
-        "Upstream pull request base repository",
-      ) !== upstreamRepository
-    ) {
-      throw new Error(`Upstream pull request must merge into ${upstreamRepository}`);
-    }
-    const actualHeadRepository = upstream.head.repo?.full_name;
-    if (
-      !actualHeadRepository ||
-      repositoryFrom(actualHeadRepository, "API upstream head repository") !==
-        upstreamHeadRepository
-    ) {
-      throw new Error(
-        `Upstream head repository mismatch: metadata ${upstreamHeadRepository}, API ${actualHeadRepository ?? "missing"}`,
-      );
-    }
-    if (upstream.head.sha.toLowerCase() !== upstreamHead) {
-      throw new Error(`Upstream head mismatch: metadata ${upstreamHead}, API ${upstream.head.sha}`);
-    }
-
-    if (reconciliation.mode === "direct") {
-      const forkPatchIds = patchIds(
-        ghApi(`repos/${repository}/pulls/${currentPullRequest}`, "application/vnd.github.patch"),
-        "Fork pull request",
-      );
-      const upstreamPatchIds = patchIds(
-        ghApi(
-          `repos/${upstreamRepository}/pulls/${upstreamPullRequest}`,
-          "application/vnd.github.patch",
-        ),
-        "Upstream pull request",
-      );
-      const patchesEquivalent =
-        forkPatchIds.length === upstreamPatchIds.length &&
-        forkPatchIds.every((id, index) => id === upstreamPatchIds[index]);
-      if (!patchesEquivalent) {
-        throw new Error(
-          `Patch equivalence failed: fork [${forkPatchIds.join(", ")}], upstream [${upstreamPatchIds.join(", ")}]`,
-        );
-      }
-
-      writeEvidence(evidencePath, {
-        repository,
-        pullRequest: currentPullRequest,
-        upstreamRepository,
-        upstreamIssue,
-        upstreamPullRequest,
-        upstreamHeadRepository,
-        upstreamHead,
-        mode: "direct",
-        forkPatchIds,
-        upstreamPatchIds,
-        result: "equivalent",
-      });
-    } else {
-      const forkMain = shaFrom(reconciliation.forkMain, "Fork main");
-      const reconciliationMerge = shaFrom(
-        reconciliation.reconciliationMerge,
-        "Reconciliation merge",
-      );
-      const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
-      if (currentHead !== reconciliationMerge) {
-        throw new Error(
-          `Reconciliation merge mismatch: metadata ${reconciliationMerge}, pull request head ${currentHead}`,
-        );
-      }
-
-      const liveMain = ghJson(`repos/${repository}/git/ref/heads/main`);
-      const liveMainSha = shaFrom(liveMain.object?.sha ?? "", "Current fork main");
-      if (liveMainSha !== forkMain) {
-        throw new Error(`Fork main mismatch: metadata ${forkMain}, current ${liveMainSha}`);
-      }
-
-      const mergeCommit = paginatedJson(
-        `repos/${repository}/pulls/${currentPullRequest}/commits`,
-      ).find((commit) => commit?.sha?.toLowerCase() === reconciliationMerge);
-      if (!mergeCommit) {
-        throw new Error(
-          `Reconciliation merge ${reconciliationMerge} was not found in pull request commits`,
-        );
-      }
-      const mergeParents = Array.isArray(mergeCommit.parents)
-        ? mergeCommit.parents.map((parent) =>
-            shaFrom(parent?.sha ?? "", "Reconciliation merge parent"),
-          )
-        : [];
-      if (mergeParents.length !== 2) {
-        throw new Error(
-          `Reconciliation merge must have exactly two parents (found ${mergeParents.length})`,
-        );
-      }
-      if (mergeParents[0] !== upstreamHead || mergeParents[1] !== forkMain) {
-        throw new Error(
-          `Reconciliation merge parents must be [${upstreamHead}, ${forkMain}] (found [${mergeParents.join(", ")}])`,
-        );
-      }
-
-      const reviewDiffReference = current.html_url
-        ? `${current.html_url.replace(/\/$/, "")}/files`
-        : `https://github.com/${repository}/pull/${currentPullRequest}/files`;
-      writeEvidence(evidencePath, {
-        repository,
-        pullRequest: currentPullRequest,
-        upstreamRepository,
-        upstreamIssue,
-        upstreamPullRequest,
-        upstreamHeadRepository,
-        upstreamHead,
-        mode: "reconciled",
-        forkMain,
-        reconciliationMerge,
-        mergeParents,
-        reviewDiffReference,
-        result: "equivalent",
-      });
-    }
-    console.log(
-      `Upstream provenance verified: ${upstreamRepository}#${upstreamPullRequest} == ${repository}#${currentPullRequest}`,
-    );
-  }
-} catch (error) {
-  console.error(`::error::${error.message}`);
-  process.exitCode = 1;
 }
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
+
+export {
+  DOWNSTREAM_GOVERNANCE_PATHS,
+  downstreamFeatureMarker,
+  downstreamGovernanceMarker,
+  effectiveApproval,
+  exceptionEvidence,
+  exceptionMode,
+  resolveApproval,
+  validateChangedFileCount,
+  validateChangedPaths,
+};

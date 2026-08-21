@@ -6,7 +6,9 @@ import { describe, expect, test } from "vitest";
 import {
   acquirePidLock,
   getPidLockInfo,
+  isAttestedCliLifecycle,
   isLocked,
+  parsePidLifecycleEnvironment,
   PidLockError,
   refreshPidLock,
   releasePidLock,
@@ -253,5 +255,60 @@ describe("pid-lock ownership", () => {
     } finally {
       await rm(paseoHome, { recursive: true, force: true });
     }
+  });
+
+  test("writes a versioned CLI lifecycle record and binds server identity at readiness", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-lifecycle-"));
+    const lifecycle = {
+      version: 1 as const,
+      manager: "cli" as const,
+      descriptor: {
+        listen: "127.0.0.1:6767",
+        relayEnabled: false,
+        relayUseTls: false,
+        mcpEnabled: true,
+        mcpInjectIntoAgents: false,
+        webUiEnabled: false,
+        hostnames: null,
+      },
+      sourceRevision: "rev-a",
+      closureRoot: "/nix/store/paseo-a",
+    };
+    try {
+      await acquirePidLock(paseoHome, null, { ownerPid: process.pid, lifecycle });
+      expect(isAttestedCliLifecycle((await getPidLockInfo(paseoHome))?.lifecycle)).toBe(false);
+      await updatePidLock(
+        paseoHome,
+        { listen: lifecycle.descriptor.listen, lifecycle: { ...lifecycle, serverId: "srv-a" } },
+        { ownerPid: process.pid },
+      );
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(process.pid);
+      expect(lock?.lifecycle?.serverId).toBe("srv-a");
+      expect(isAttestedCliLifecycle(lock?.lifecycle)).toBe(true);
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects malformed or mismatched lifecycle environment values", () => {
+    expect(parsePidLifecycleEnvironment({ PASEO_LIFECYCLE_MANAGER: "desktop" })).toEqual({
+      version: 1,
+      manager: "desktop",
+    });
+    expect(
+      parsePidLifecycleEnvironment({
+        PASEO_LIFECYCLE_MANAGER: "cli",
+        PASEO_LIFECYCLE_DESCRIPTOR: "{not-json}",
+      }),
+    ).toEqual({ version: 1, manager: "unknown" });
+    expect(
+      parsePidLifecycleEnvironment({
+        PASEO_LIFECYCLE_MANAGER: "cli",
+        PASEO_LIFECYCLE_DESCRIPTOR: JSON.stringify({ listen: "127.0.0.1:6767" }),
+        PASEO_LIFECYCLE_SOURCE_REVISION: "rev-a",
+        PASEO_LIFECYCLE_CLOSURE_ROOT: "/nix/store/paseo-a",
+      }),
+    ).toEqual({ version: 1, manager: "unknown" });
   });
 });

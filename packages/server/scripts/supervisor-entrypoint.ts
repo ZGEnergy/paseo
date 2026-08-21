@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   acquirePidLock,
+  parsePidLifecycleEnvironment,
   PidLockError,
   releasePidLock,
   startPidLockHeartbeat,
@@ -117,6 +118,7 @@ async function main(): Promise<void> {
     await acquirePidLock(paseoHome, null, {
       ownerPid: process.pid,
       reclaimStaleDesktopLock: config.reclaimStalePidLock,
+      lifecycle: parsePidLifecycleEnvironment(workerEnv),
     });
   } catch (error) {
     if (error instanceof PidLockError) {
@@ -174,8 +176,19 @@ async function main(): Promise<void> {
       : undefined,
     restartOnCrash: true,
     logFile: supervisorLogFile,
-    onWorkerReady: async ({ listen }) => {
-      await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
+    onWorkerReady: async ({ listen, serverId }) => {
+      const lifecycle = parsePidLifecycleEnvironment(workerEnv);
+      await updatePidLock(
+        paseoHome,
+        {
+          listen,
+          lifecycle: {
+            ...(lifecycle ?? { version: 1, manager: "unknown" as const }),
+            serverId,
+          },
+        },
+        { ownerPid: process.pid },
+      );
     },
     onSupervisorExit: releaseLock,
   });
