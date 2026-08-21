@@ -29,6 +29,50 @@ the titlebar row. Production builds leave the variable unset and show no label.
 
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
+## Building the desktop app locally
+
+```bash
+npm run build:desktop
+```
+
+Artifacts land in `packages/desktop/release/`.
+
+Local builds are **ad-hoc signed**: they run on the machine that produced them
+and are not distributable. Code signing is opt-in, driven by `CSC_LINK` — the
+release workflow supplies it from the `APPLE_CERTIFICATE` secret.
+
+This is deliberate. electron-builder otherwise scans the login keychain and
+signs with the first identity it finds, which on a developer Mac is usually an
+unrelated cert (Apple Configurator, an MDM enrollment cert). `codesign` then
+blocks on a keychain-password prompt that is invisible to a non-interactive
+build, and packaging hangs indefinitely partway through the bundle rather than
+failing. `packages/desktop/scripts/signing-env.mjs` forces
+`CSC_IDENTITY_AUTO_DISCOVERY=false` whenever no certificate was configured, so
+the keychain is never consulted by accident.
+
+An ad-hoc build also drops the hardened runtime (`-c.mac.hardenedRuntime=false`,
+added by the same script). Hardened runtime turns on library validation, which
+requires every loaded library to share a Team ID with the main executable, and
+an ad-hoc signature has no Team ID. Leaving it on packages a bundle that builds
+fine and then dies at launch, before any app code runs:
+
+```
+Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+... mapping process and mapped file (non-platform) have different Team IDs
+```
+
+If you hit that crash, you are running a bundle signed ad-hoc with the hardened
+runtime still on — rebuild rather than re-signing the app in place, or the
+`.dmg` and `.zip` keep the broken signature. Release builds keep hardened
+runtime; they sign with a real identity, and notarization requires it.
+
+To sign a local build with a real Developer ID in your keychain, opt in
+explicitly:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=true npm run build:desktop
+```
+
 ## Nix desktop package
 
 The flake exposes `packages.<system>.desktop` on Linux and macOS:
