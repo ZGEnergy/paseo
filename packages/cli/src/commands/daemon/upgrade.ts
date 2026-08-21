@@ -10,6 +10,17 @@ import {
 } from "./local-upgrade.js";
 import { resolveLocalPaseoHome } from "./local-daemon.js";
 
+export const HOST_SHELL_UPGRADE_ERROR =
+  "upgrade must run from a host shell, not a Paseo agent or workspace terminal";
+
+export function assertHostShellUpgrade(
+  env: { PASEO_AGENT_ID?: string; PASEO_WORKSPACE_ID?: string } = process.env,
+): void {
+  if (env.PASEO_AGENT_ID?.trim() || env.PASEO_WORKSPACE_ID?.trim()) {
+    throw new Error(HOST_SHELL_UPGRADE_ERROR);
+  }
+}
+
 interface UpgradeCommandOptions extends CommandOptions {
   checkout?: string;
   home?: string;
@@ -94,6 +105,7 @@ function result(value: LocalUpgradeResult): SingleResult<LocalUpgradeResult> {
 export async function runUpgradeLocalCommand(
   options: UpgradeCommandOptions,
 ): Promise<SingleResult<LocalUpgradeResult>> {
+  assertHostShellUpgrade();
   const home = resolveLocalPaseoHome(options.home);
   const value = await upgradeLocalDaemon({
     home,
@@ -109,6 +121,7 @@ export async function runUpgradeLocalCommand(
 export async function runBootstrapUpgradeCommand(
   options: BootstrapCommandOptions,
 ): Promise<SingleResult<LocalUpgradeResult>> {
+  assertHostShellUpgrade();
   const home = resolveLocalPaseoHome(options.home);
   const descriptor = {
     listen: requireOption(options.listen, "--listen"),

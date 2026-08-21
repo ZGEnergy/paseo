@@ -10,6 +10,15 @@ describe("upgrade-local-daemon checkout entrypoint", () => {
     expect(script.indexOf("status --porcelain")).toBeLessThan(script.indexOf("nix build"));
   });
 
+  test("refuses Paseo agent and workspace env before staged Nix build", async () => {
+    const script = await readFile(scriptPath, "utf8");
+    expect(script.indexOf("PASEO_AGENT_ID")).toBeLessThan(script.indexOf("nix build"));
+    expect(script.indexOf("PASEO_WORKSPACE_ID")).toBeLessThan(script.indexOf("nix build"));
+    expect(script).toContain(
+      "upgrade must run from a host shell, not a Paseo agent or workspace terminal",
+    );
+  });
+
   test("invokes the staged absolute CLI without npm global mutation", async () => {
     const script = await readFile(scriptPath, "utf8");
     expect(script).toContain('"$closure_root/bin/paseo" daemon "$subcommand"');
