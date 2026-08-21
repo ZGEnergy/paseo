@@ -202,7 +202,7 @@ function resolveApproval(reviews, currentHead, authorLogin) {
   );
   if (!approval) {
     throw new Error(
-      "Downstream exception requires a non-author human approval of the current pull request head",
+      "Downstream feature exception requires a non-author human approval of the current pull request head",
     );
   }
   return {
@@ -237,21 +237,16 @@ function exceptionEvidence(repository, pullRequest, mode, rationale, scope, appr
       changedFiles: scope.changedFiles,
     },
     currentHead: scope.currentHead,
-    approval,
+    ...(mode === "downstream-feature" ? { approval } : {}),
     result: mode === "downstream-governance" ? "governance-exception" : "feature-exception",
   };
 }
 
 function downstreamExceptionEvidence(current, repository, pullRequest, mode, rationale) {
   const scope = changedFiles(current, repository, pullRequest, mode);
-  return exceptionEvidence(
-    repository,
-    pullRequest,
-    mode,
-    rationale,
-    scope,
-    effectiveApproval(current, repository, pullRequest),
-  );
+  const approval =
+    mode === "downstream-feature" ? effectiveApproval(current, repository, pullRequest) : undefined;
+  return exceptionEvidence(repository, pullRequest, mode, rationale, scope, approval);
 }
 
 function metadataValue(body, label) {
@@ -403,9 +398,6 @@ function writeEvidence(path, evidence) {
         `- Exception scope: changed files restricted to the exact governance allowlist`,
         `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
         `- Current pull request head: \`${evidence.currentHead}\``,
-        `- Effective approval: review #${evidence.approval.id} by \`${evidence.approval.authorLogin}\` (${evidence.approval.authorType})`,
-        `- Review state: \`${evidence.approval.state}\``,
-        `- Review commit: \`${evidence.approval.commitOid}\` (matches current head)`,
         "- Result: **downstream governance exception accepted; no upstream patch equivalence asserted**",
         "",
       ];

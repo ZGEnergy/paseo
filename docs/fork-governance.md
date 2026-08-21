@@ -14,10 +14,10 @@ This repository is the public `ZGEnergy/paseo` fork. Keep the fork's `main` bran
 Internal pull requests targeting `internal/main` use one of three mutually exclusive modes:
 
 - **Upstream import** (default): identifies its upstream issue, pull request, head repository, and upstream pull-request head SHA. The **Upstream provenance** check verifies that metadata against the public upstream API, confirms the base repository, actual head repository, and SHA, compares every upstream and fork pull-request patch ID in order, and uploads reconciliation evidence. Direct imports need no human approval; reconciled imports (with `Fork main:` and `Reconciliation merge:` metadata) retain one human approval because conflict resolution requires review.
-- **Downstream governance**: uses the exact body marker `Downstream governance: true` and is restricted to the governance allowlist below. It does not assert upstream patch equivalence, but requires one non-author human `APPROVED` review of the current pull-request head.
+- **Downstream governance**: uses the exact body marker `Downstream governance: true` and is restricted to the governance allowlist below. It does not assert upstream patch equivalence and does not require a pull-request review.
 - **Downstream feature**: uses exactly `Downstream feature: true` plus one non-empty `Downstream rationale:` line. It is fork-only, requires one non-author human `APPROVED` review of the current pull-request head, and cannot change governance-allowlisted files or any `.github/workflows/` file.
 
-Feature and governance markers cannot coexist with each other or with upstream-provenance metadata. A review on an older head, a dismissed review, an author review, or a bot review does not satisfy either exception. Any new commit invalidates prior approval until a reviewer approves the new head.
+Feature and governance markers cannot coexist with each other or with upstream-provenance metadata. For a downstream feature, a review on an older head, a dismissed review, an author review, or a bot review does not satisfy the exception. Any new commit invalidates prior feature approval until a reviewer approves the new head.
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
 
@@ -40,7 +40,7 @@ A fork-only governance pull request may select the narrow exception only with th
 - `.github/workflows/deploy-relay.yml`
 - `.claude/skills/ship/SKILL.md`
 
-This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. A qualifying governance pull request requires the same current-head non-author human approval resolver as a downstream feature, does not assert upstream patch equivalence, and records its outcome as a downstream-governance exception.
+This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. A qualifying governance pull request is validated only against the exact allowlist, does not require review approval, does not assert upstream patch equivalence, and records its outcome as a downstream-governance exception.
 
 ## Local ship gate
 

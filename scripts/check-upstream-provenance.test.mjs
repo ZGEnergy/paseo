@@ -140,17 +140,26 @@ test("preserves current-head approval across later comment-only reviews", () => 
   }
 });
 
-test("governance evidence records effective approval", () => {
+test("governance evidence does not require review approval", () => {
+  const evidence = exceptionEvidence("fork/project", 7, "downstream-governance", undefined, {
+    currentHead,
+    changedFiles: ["docs/fork-governance.md"],
+  });
+  assert.equal(evidence.result, "governance-exception");
+  assert.equal("approval" in evidence, false);
+  assert.equal(evidence.currentHead, currentHead);
+});
+
+test("feature evidence retains effective approval", () => {
   const approval = resolveApproval([review()], currentHead, "author");
   const evidence = exceptionEvidence(
     "fork/project",
     7,
-    "downstream-governance",
-    undefined,
-    { currentHead, changedFiles: ["docs/fork-governance.md"] },
+    "downstream-feature",
+    "reason",
+    { currentHead, changedFiles: ["packages/example.ts"] },
     approval,
   );
-  assert.equal(evidence.result, "governance-exception");
+  assert.equal(evidence.result, "feature-exception");
   assert.deepEqual(evidence.approval, approval);
-  assert.equal(evidence.currentHead, currentHead);
 });
