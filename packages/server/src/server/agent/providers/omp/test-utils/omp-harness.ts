@@ -19,7 +19,7 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
+import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent } from "../rpc-types.js";
 import { FakeOmp, type FakeOmpSubagentSnapshot } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -445,6 +445,10 @@ export class OmpHarness {
     detail: string;
   }): void {
     this.omp.latestSession().requestToolApproval(input);
+  }
+
+  emit(event: OmpRuntimeEvent): void {
+    this.omp.latestSession().emit(event);
   }
 
   pendingPermissions() {
