@@ -29,6 +29,34 @@ the titlebar row. Production builds leave the variable unset and show no label.
 
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
+## Building the desktop app locally
+
+```bash
+npm run build:desktop
+```
+
+Artifacts land in `packages/desktop/release/`.
+
+Local builds are **ad-hoc signed**: they run on the machine that produced them
+and are not distributable. Code signing is opt-in, driven by `CSC_LINK` — the
+release workflow supplies it from the `APPLE_CERTIFICATE` secret.
+
+This is deliberate. electron-builder otherwise scans the login keychain and
+signs with the first identity it finds, which on a developer Mac is usually an
+unrelated cert (Apple Configurator, an MDM enrollment cert). `codesign` then
+blocks on a keychain-password prompt that is invisible to a non-interactive
+build, and packaging hangs indefinitely partway through the bundle rather than
+failing. `packages/desktop/scripts/signing-env.mjs` forces
+`CSC_IDENTITY_AUTO_DISCOVERY=false` whenever no certificate was configured, so
+the keychain is never consulted by accident.
+
+To sign a local build with a real Developer ID in your keychain, opt in
+explicitly:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=true npm run build:desktop
+```
+
 ## Nix desktop package
 
 The flake exposes `packages.<system>.desktop` on Linux and macOS:
