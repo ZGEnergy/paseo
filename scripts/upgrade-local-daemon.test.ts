@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 const scriptPath = new URL("./upgrade-local-daemon.sh", import.meta.url);
@@ -8,6 +10,26 @@ describe("upgrade-local-daemon checkout entrypoint", () => {
     const script = await readFile(scriptPath, "utf8");
     expect(script.indexOf("branch --show-current")).toBeLessThan(script.indexOf("nix build"));
     expect(script.indexOf("status --porcelain")).toBeLessThan(script.indexOf("nix build"));
+  });
+
+  test("refuses Paseo agent and workspace env before staged Nix build", async () => {
+    const script = await readFile(scriptPath, "utf8");
+    expect(script.indexOf("PASEO_AGENT_ID")).toBeLessThan(script.indexOf("nix build"));
+    expect(script.indexOf("PASEO_WORKSPACE_ID")).toBeLessThan(script.indexOf("nix build"));
+    expect(script).toContain(
+      "upgrade must run from a host shell, not a Paseo agent or workspace terminal",
+    );
+  });
+
+  test("does not trip set -u when upgrade env vars are unset", () => {
+    const env = { ...process.env };
+    delete env.PASEO_AGENT_ID;
+    delete env.PASEO_WORKSPACE_ID;
+    const result = spawnSync("bash", [fileURLToPath(scriptPath)], {
+      env,
+      encoding: "utf8",
+    });
+    expect(result.stderr).not.toContain("unbound variable");
   });
 
   test("invokes the staged absolute CLI without npm global mutation", async () => {

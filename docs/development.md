@@ -586,6 +586,10 @@ upgrade never installs Nix, mutates a global npm installation, or changes `$PASE
 daemon started by the CLI with a live, versioned PID lifecycle record (`manager=cli`) is eligible;
 desktop-managed, system-managed, legacy, unknown, stale, or mismatched records fail closed.
 
+Run the command from a host shell (SSH or tmux), not a Paseo agent or workspace
+terminal. Those processes die when the daemon stops, and the upgrade refuses
+when `PASEO_AGENT_ID` or `PASEO_WORKSPACE_ID` is set.
+
 From a clean `internal/main` checkout, run:
 
 ```bash

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+agent_id=${PASEO_AGENT_ID-}
+workspace_id=${PASEO_WORKSPACE_ID-}
+if [[ -n "${agent_id//[[:space:]]}" || -n "${workspace_id//[[:space:]]}" ]]; then
+  echo "upgrade must run from a host shell, not a Paseo agent or workspace terminal" >&2
+  exit 1
+fi
+
 checkout=${PASEO_SOURCE_CHECKOUT_PATH:-$(git rev-parse --show-toplevel)}
 if [[ "$(git -C "$checkout" branch --show-current)" != "internal/main" ]]; then
   echo "upgrade requires a checkout on internal/main" >&2
