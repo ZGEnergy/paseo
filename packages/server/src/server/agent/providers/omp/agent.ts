@@ -139,8 +139,26 @@ export interface OmpAgentClientOptions {
   usagePollScheduler?: OmpUsagePollScheduler;
 }
 
+export interface OmpProviderIdleAttempt {
+  /** State checks already made for this completion gate, 1-based. */
+  attempt: number;
+  /** Consecutive `get_state` rejections; any successful response resets it. */
+  consecutiveFailures: number;
+  /** Wall-clock time since the gate opened, covering waits and `get_state`. */
+  elapsedMs: number;
+}
+
+/**
+ * `reason` names the exhausted budget so the turn reports why it stopped rather
+ * than inferring it from whichever check happened to be last.
+ */
+export type OmpProviderIdleDecision =
+  | { retry: true }
+  | { retry: false; reason: "wait_budget" | "failure_budget" };
+
 export interface OmpProviderIdleScheduler {
-  waitForRetry(): Promise<void>;
+  /** Wait before the next state check, or abandon the gate so the turn fails. */
+  waitForRetry(attempt: OmpProviderIdleAttempt): Promise<OmpProviderIdleDecision>;
 }
 
 export interface OmpNoTurnScheduler {
@@ -194,10 +212,39 @@ interface OmpAgentSessionOptions {
   live?: boolean;
 }
 
-function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
+// OMP processes a state request only once its RPC loop is promptable again, so
+// the first checks after agent_end usually miss. Poll fast at first, then back
+// off: a stalled provider otherwise costs 100 RPCs a second for as long as the
+// stall lasts.
+// Autonomous OMP cycles carry no turn ID; they still need a gate key of their own.
+const OMP_AUTONOMOUS_GATE_KEY = "autonomous";
+
+const OMP_PROVIDER_IDLE_MIN_RETRY_MS = 10;
+const OMP_PROVIDER_IDLE_MAX_RETRY_MS = 1_000;
+// Wall clock, not a retry count: each get_state carries the JSONL-RPC request
+// timeout, so counting attempts would let a slow-but-answering state path stretch
+// the wait to tens of minutes.
+const OMP_PROVIDER_IDLE_BUDGET_MS = 60_000;
+// A get_state rejection already costs a full RPC timeout, so a few in a row are
+// enough evidence that the state path is gone.
+const OMP_PROVIDER_IDLE_FAILURE_BUDGET = 3;
+
+function ompProviderIdleRetryDelayMs(attempt: number): number {
+  const backoff = OMP_PROVIDER_IDLE_MIN_RETRY_MS * 2 ** (attempt - 1);
+  return Math.min(OMP_PROVIDER_IDLE_MAX_RETRY_MS, backoff);
+}
+
+export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
   return {
-    waitForRetry: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    waitForRetry: async ({ attempt, consecutiveFailures, elapsedMs }) => {
+      if (consecutiveFailures >= OMP_PROVIDER_IDLE_FAILURE_BUDGET) {
+        return { retry: false, reason: "failure_budget" };
+      }
+      if (elapsedMs >= OMP_PROVIDER_IDLE_BUDGET_MS) {
+        return { retry: false, reason: "wait_budget" };
+      }
+      await delay(ompProviderIdleRetryDelayMs(attempt));
+      return { retry: true };
     },
   };
 }
@@ -855,6 +902,7 @@ export class OmpAgentSession implements AgentSession {
   private activeAssistantMessageId: string | null = null;
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
+  private providerIdleGate: { key: string; messages: OmpAgentMessage[] } | null = null;
   private activeTurnHasUserMessage = false;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
@@ -1161,6 +1209,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.providerIdleGate = null;
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
     try {
@@ -1894,7 +1943,11 @@ export class OmpAgentSession implements AgentSession {
         }
         // A state request is processed after OMP's RPC loop becomes promptable,
         // so do not advertise Paseo idle until it reports that transition.
-        void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
+        void this.completeTurnAfterProviderIdle(turnId, terminalMessages).catch(
+          (error: unknown) => {
+            this.logger.warn({ err: error }, "OMP provider idle gate failed");
+          },
+        );
         return;
       }
       default:
@@ -2169,8 +2222,7 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
-  private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
-    this.forceSettleDeferredTaskCalls();
+  private resetActiveTurn(): void {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
@@ -2178,6 +2230,11 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
+  }
+
+  private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    this.forceSettleDeferredTaskCalls();
+    this.resetActiveTurn();
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
@@ -2202,20 +2259,65 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
-    while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
-      try {
-        const state = await this.runtimeSession.getState();
-        this.state = state;
-        // Parent model idle is not enough: OMP-internal `task` children keep
-        // writing after agent_end / isStreaming=false (#2232).
-        if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
-          this.completeTurn(turnId, messages);
+    // OMP can end more than one cycle for a single prompt. Without this gate a
+    // second loop races the first and completes the same turn twice. Autonomous
+    // cycles carry no turn ID, so they share one key: their loop polls too.
+    const key = turnId ?? OMP_AUTONOMOUS_GATE_KEY;
+    if (this.providerIdleGate?.key === key) {
+      // The newest agent_end owns the terminal payload; the running loop reads it
+      // at completion time so a late provider error is not dropped.
+      this.providerIdleGate.messages = messages;
+      return;
+    }
+    const gate = { key, messages };
+    this.providerIdleGate = gate;
+    try {
+      const startedAt = Date.now();
+      let attempt = 0;
+      let consecutiveFailures = 0;
+      let lastState: OmpSessionState | null = null;
+      let lastError: unknown = null;
+      while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
+        attempt += 1;
+        try {
+          const state = await this.runtimeSession.getState();
+          this.state = state;
+          lastState = state;
+          consecutiveFailures = 0;
+          // Parent model idle is not enough: OMP-internal `task` children keep
+          // writing after agent_end / isStreaming=false (#2232).
+          if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
+            this.completeTurn(turnId, gate.messages);
+            return;
+          }
+        } catch (error) {
+          lastError = error;
+          consecutiveFailures += 1;
+          this.logger.debug(
+            { err: error },
+            "OMP state unavailable while waiting for provider idle",
+          );
+        }
+        const decision = await this.providerIdleScheduler.waitForRetry({
+          attempt,
+          consecutiveFailures,
+          elapsedMs: Date.now() - startedAt,
+        });
+        if (!decision.retry) {
+          this.failStalledTurn(turnId, {
+            reason: decision.reason,
+            attempt,
+            consecutiveFailures,
+            lastState,
+            lastError,
+          });
           return;
         }
-      } catch (error) {
-        this.logger.debug({ err: error }, "OMP state unavailable while waiting for provider idle");
       }
-      await this.providerIdleScheduler.waitForRetry();
+    } finally {
+      if (this.providerIdleGate === gate) {
+        this.providerIdleGate = null;
+      }
     }
   }
 
@@ -2230,6 +2332,52 @@ export class OmpAgentSession implements AgentSession {
     }
     this.settleDeferredTaskCalls();
     return this.subagentIndex.hasRunning(this.runtimeSession);
+  }
+
+  private failStalledTurn(
+    turnId: string | undefined,
+    context: {
+      reason: "wait_budget" | "failure_budget";
+      attempt: number;
+      consecutiveFailures: number;
+      lastState: OmpSessionState | null;
+      lastError: unknown;
+    },
+  ): void {
+    const stateUnavailable = context.reason === "failure_budget";
+    // Both observations go into every diagnostic: which budget ran out says what
+    // Paseo did, the last state and the last error say what OMP was doing.
+    const details = [`state checks: ${context.attempt}`];
+    if (context.lastState) {
+      details.push(
+        `last OMP state: isStreaming=${context.lastState.isStreaming}, isCompacting=${context.lastState.isCompacting}`,
+      );
+    }
+    if (context.lastError) {
+      details.push(
+        `last get_state error after ${context.consecutiveFailures} consecutive failures: ${toDiagnosticErrorMessage(context.lastError)}`,
+      );
+    }
+    const diagnostic = details.join("; ");
+    this.logger.warn(
+      { turnId, reason: context.reason, diagnostic },
+      "OMP never reported an idle state after ending its response",
+    );
+    // A stall leaves OMP's state unknown, so anything still marked running has no
+    // turn left to finish it.
+    this.terminalizeActiveWork();
+    this.resetActiveTurn();
+    this.usagePoller.stopTurn();
+    this.emit({
+      type: "turn_failed",
+      provider: this.provider,
+      turnId,
+      error: stateUnavailable
+        ? "OMP finished its response but its state is unavailable, so Paseo cannot confirm the turn ended."
+        : "OMP finished its response but never reported an idle state, so Paseo stopped waiting for the turn to end.",
+      code: stateUnavailable ? "omp_provider_state_unavailable" : "omp_provider_idle_timeout",
+      diagnostic,
+    });
   }
 
   private async refreshState(): Promise<void> {
