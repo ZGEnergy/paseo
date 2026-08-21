@@ -44,6 +44,7 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   ".github/workflows/android-apk-release.yml",
   ".github/workflows/desktop-release.yml",
   ".github/workflows/deploy-relay.yml",
+  ".claude/skills/ship/SKILL.md",
 ]);
 const DOWNSTREAM_GOVERNANCE_PATH_SET = new Set(DOWNSTREAM_GOVERNANCE_PATHS);
 const EFFECTIVE_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);

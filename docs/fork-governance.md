@@ -17,6 +17,10 @@ Clean direct imports (patch-equivalent to the upstream pull request) need no hum
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
 
+## Local ship gate
+
+Internal teammates run `/ship` locally for a pull request that targets `internal/main`. The operator uses their own review agent, posts its review to GitHub, and stops on a high-risk finding. The skill requires CI and provenance for the current head before review. A clean direct import may dispatch **Upstream import merge** after the review posts. A reconciled import requires the focused conflict-resolution review and the existing human approval before that dispatch. See `.claude/skills/ship/SKILL.md` for the procedure.
+
 ### Narrow downstream-governance exception
 
 A fork-only governance pull request may select the narrow exception only with the exact pull-request-body marker `Downstream governance: true`. Marker variants, including different capitalization or values, do not select it. The checker accepts the marker only when every changed file is exactly one of these governance artifacts:
@@ -32,6 +36,7 @@ A fork-only governance pull request may select the narrow exception only with th
 - `.github/workflows/android-apk-release.yml`
 - `.github/workflows/desktop-release.yml`
 - `.github/workflows/deploy-relay.yml`
+- `.claude/skills/ship/SKILL.md`
 
 This exception does not provide a general provenance bypass: a non-governance path, missing or invalid marker, or ordinary feature/import pull request remains subject to the requirements above. For a qualifying governance pull request, the checker intentionally does not require upstream metadata or assert upstream patch equivalence; it records the outcome as an exception instead. The governance exception requires an effective approval by a human GitHub user for the current pull-request head. An approval for an older head, an approval from a bot or GitHub App, and a dismissed approval do not count; submitting or dismissing a review reruns provenance so the current-head requirement is reevaluated. Evidence and the workflow summary identify this outcome as a downstream-governance exception. The checker always runs from trusted `internal/main` code, so this first exception change must be merged through the documented human/admin bootstrap process after a current-head approval; later governance pull requests use the review-triggered check.
 
