@@ -660,9 +660,19 @@ function isOmpTurnProgressEvent(event: OmpRuntimeEvent): boolean {
 }
 
 /**
- * Progress is a reply that differs from the last one. This assumes OMP moves
- * `lastUpdate` (or the running set) while a child works; if it does not, a child
- * working silently for longer than the subagent budget fails the parent turn.
+ * Progress is a reply that differs from the last one.
+ *
+ * Measured against OMP 17.4.0: `lastUpdate` moves per child activity, not per
+ * reply, so it is a real progress signal rather than a clock. It does not move
+ * while a child is busy but quiet - a child running `sleep 40` past its parent's
+ * agent_end held one value for 39.6 s across 80 polls, with no inbound frame
+ * either, because the parent's `task` tool call (whose tool_execution_update
+ * timer fires every 500 ms) has already ended by then. Keying on the running-id
+ * set instead would be strictly worse: it is frozen for the child's whole life.
+ *
+ * The consequence is deliberate and bounded: a child silent for longer than
+ * OMP_PROVIDER_SUBAGENT_BUDGET_MS fails its parent turn, because a snapshot that
+ * never changes is indistinguishable from a wedged one.
  */
 function ompSubagentFingerprint(snapshots: OmpSubagentSnapshot[]): string {
   return snapshots
