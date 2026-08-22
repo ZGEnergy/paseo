@@ -3,26 +3,13 @@ import test from "node:test";
 
 import {
   downstreamFeatureMarker,
-  effectiveApproval,
   exceptionEvidence,
   exceptionMode,
-  resolveApproval,
   validateChangedFileCount,
   validateChangedPaths,
 } from "./check-upstream-provenance.mjs";
 
 const currentHead = "a".repeat(40);
-const otherHead = "b".repeat(40);
-
-function review(overrides = {}) {
-  return {
-    id: 1,
-    state: "APPROVED",
-    commit_id: currentHead,
-    user: { login: "reviewer", type: "User" },
-    ...overrides,
-  };
-}
 
 test("accepts exact downstream-feature marker and rationale", () => {
   assert.deepEqual(
@@ -93,84 +80,6 @@ test("forbids governance and workflow paths in feature mode", () => {
   );
 });
 
-test("requires a current-head approval from a non-author human", () => {
-  assert.deepEqual(resolveApproval([review()], currentHead, "author"), {
-    id: 1,
-    authorLogin: "reviewer",
-    authorType: "User",
-    state: "APPROVED",
-    commitOid: currentHead,
-  });
-  for (const candidate of [
-    review({ commit_id: otherHead }),
-    review({ user: { login: "author", type: "User" } }),
-    review({ user: { login: "automation", type: "Bot" } }),
-    review({ state: "DISMISSED" }),
-  ]) {
-    assert.throws(
-      () => resolveApproval([candidate], currentHead, "author"),
-      /current pull request head/,
-    );
-  }
-});
-
-test("latest review state replaces an older approval", () => {
-  assert.throws(
-    () =>
-      resolveApproval(
-        [review({ id: 1 }), review({ id: 2, state: "DISMISSED" })],
-        currentHead,
-        "author",
-      ),
-    /current pull request head/,
-  );
-});
-
-test("preserves current-head approval across later comment-only reviews", () => {
-  for (const state of ["COMMENTED", "PENDING"]) {
-    assert.deepEqual(
-      resolveApproval([review({ id: 1 }), review({ id: 2, state })], currentHead, "author"),
-      {
-        id: 1,
-        authorLogin: "reviewer",
-        authorType: "User",
-        state: "APPROVED",
-        commitOid: currentHead,
-      },
-    );
-  }
-});
-
-test("accepts human merger evidence only for a closed-and-merged pull request", () => {
-  assert.deepEqual(
-    effectiveApproval(
-      {
-        state: "closed",
-        merged: true,
-        merged_by: { login: "merger", type: "User" },
-      },
-      "fork/project",
-      7,
-    ),
-    {
-      phase: "post-merge",
-      evidenceType: "human-merger",
-      authorLogin: "merger",
-      authorType: "User",
-    },
-  );
-  for (const current of [
-    { state: "closed", merged: false, merged_by: { login: "merger", type: "User" } },
-    { state: "closed", merged: true },
-    { state: "closed", merged: true, merged_by: { login: "automation", type: "Bot" } },
-  ]) {
-    assert.throws(
-      () => effectiveApproval(current, "fork/project", 7),
-      /closed and merged|human merged_by/,
-    );
-  }
-});
-
 test("governance evidence does not require review approval", () => {
   const evidence = exceptionEvidence("fork/project", 7, "downstream-governance", undefined, {
     currentHead,
@@ -181,16 +90,12 @@ test("governance evidence does not require review approval", () => {
   assert.equal(evidence.currentHead, currentHead);
 });
 
-test("feature evidence retains effective approval", () => {
-  const approval = resolveApproval([review()], currentHead, "author");
-  const evidence = exceptionEvidence(
-    "fork/project",
-    7,
-    "downstream-feature",
-    "reason",
-    { currentHead, changedFiles: ["packages/example.ts"] },
-    approval,
-  );
+test("feature evidence does not require or store review approval", () => {
+  const evidence = exceptionEvidence("fork/project", 7, "downstream-feature", "reason", {
+    currentHead,
+    changedFiles: ["packages/example.ts"],
+  });
   assert.equal(evidence.result, "feature-exception");
-  assert.deepEqual(evidence.approval, approval);
+  assert.equal("approval" in evidence, false);
+  assert.equal(evidence.currentHead, currentHead);
 });
