@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertForkMainContained,
   downstreamFeatureMarker,
   effectiveApproval,
   exceptionEvidence,
@@ -193,4 +194,52 @@ test("feature evidence retains effective approval", () => {
   );
   assert.equal(evidence.result, "feature-exception");
   assert.deepEqual(evidence.approval, approval);
+});
+
+test("accepts exact downstream-sync marker", () => {
+  assert.deepEqual(exceptionMode("Downstream sync: true"), { mode: "downstream-sync" });
+});
+
+test("rejects invalid downstream-sync markers", () => {
+  for (const body of [
+    "Downstream sync: false",
+    "Downstream sync: true\nDownstream sync: true",
+    " Downstream sync: true",
+    "downstream sync : true",
+  ]) {
+    assert.throws(() => exceptionMode(body), /Downstream sync/);
+  }
+});
+
+test("rejects downstream-sync combined with other exception modes", () => {
+  assert.throws(
+    () => exceptionMode("Downstream sync: true\nDownstream governance: true"),
+    /mutually exclusive/,
+  );
+  assert.throws(
+    () => exceptionMode("Downstream sync: true\nDownstream feature: true\nDownstream rationale: r"),
+    /mutually exclusive/,
+  );
+  assert.throws(
+    () => exceptionMode("Downstream sync: true\nUpstream issue: 1"),
+    /upstream provenance metadata/,
+  );
+});
+
+test("allows governance and workflow paths in sync mode", () => {
+  const paths = [
+    ".github/workflows/ci.yml",
+    "scripts/check-upstream-provenance.mjs",
+    "packages/example.ts",
+  ];
+  assert.deepEqual(validateChangedPaths(paths, "downstream-sync"), paths);
+});
+
+test("sync mode requires the pull request head to contain fork main", () => {
+  for (const status of ["ahead", "identical"]) {
+    assert.doesNotThrow(() => assertForkMainContained(status));
+  }
+  for (const status of ["behind", "diverged", undefined]) {
+    assert.throws(() => assertForkMainContained(status), /fork main/i);
+  }
 });

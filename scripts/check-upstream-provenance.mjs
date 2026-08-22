@@ -89,6 +89,17 @@ function downstreamGovernanceMarker(body) {
   return true;
 }
 
+function downstreamSyncMarker(body) {
+  const markers = markerLines(body, "Downstream sync");
+  if (!markers.length) return false;
+  if (markers.length !== 1 || markers[0] !== "Downstream sync: true") {
+    throw new Error(
+      "Pull request body must contain exactly `Downstream sync: true` when using downstream sync mode",
+    );
+  }
+  return true;
+}
+
 function downstreamFeatureMarker(body) {
   const markers = markerLines(body, "Downstream feature");
   const rationales = markerLines(body, "Downstream rationale");
@@ -115,6 +126,14 @@ function downstreamFeatureMarker(body) {
   return { rationale };
 }
 
+function assertForkMainContained(status) {
+  if (status !== "ahead" && status !== "identical") {
+    throw new Error(
+      `Downstream sync head must contain fork main (comparison status ${status ?? "unavailable"})`,
+    );
+  }
+}
+
 function validateChangedFileCount(files, expectedCount) {
   if (!Number.isInteger(expectedCount) || files.length !== expectedCount) {
     throw new Error(
@@ -131,21 +150,26 @@ function metadataLine(body, label) {
 function exceptionMode(body) {
   const governance = downstreamGovernanceMarker(body);
   const feature = downstreamFeatureMarker(body);
+  const sync = downstreamSyncMarker(body);
   const provenanceLabels = UPSTREAM_PROVENANCE_LABELS.filter((label) => metadataLine(body, label));
-  if (governance && feature) {
-    throw new Error("Downstream feature and downstream governance modes are mutually exclusive");
+  if ([governance, Boolean(feature), sync].filter(Boolean).length > 1) {
+    throw new Error(
+      "Downstream feature, downstream governance, and downstream sync modes are mutually exclusive",
+    );
   }
-  if ((governance || feature) && provenanceLabels.length) {
+  if ((governance || feature || sync) && provenanceLabels.length) {
     throw new Error(
       `Downstream exception mode cannot include upstream provenance metadata: ${provenanceLabels.join(", ")}`,
     );
   }
   if (feature) return { mode: "downstream-feature", rationale: feature.rationale };
   if (governance) return { mode: "downstream-governance" };
+  if (sync) return { mode: "downstream-sync" };
   return { mode: "upstream-import" };
 }
 
 function validateChangedPaths(paths, mode) {
+  if (mode === "downstream-sync") return paths;
   for (const path of paths) {
     if (
       mode === "downstream-governance"
@@ -273,6 +297,22 @@ function exceptionEvidence(repository, pullRequest, mode, rationale, scope, appr
     currentHead: scope.currentHead,
     ...(mode === "downstream-feature" ? { approval } : {}),
     result: mode === "downstream-governance" ? "governance-exception" : "feature-exception",
+  };
+}
+
+function downstreamSyncEvidence(current, repository, pullRequest) {
+  const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
+  const comparison = ghJson(`repos/${repository}/compare/main...${currentHead}`);
+  assertForkMainContained(comparison.status);
+  return {
+    repository,
+    pullRequest,
+    mode: "downstream-sync",
+    exception: "downstream-sync",
+    forkMain: shaFrom(comparison.base_commit?.sha ?? "", "Fork main"),
+    currentHead,
+    approval: effectiveApproval(current, repository, pullRequest),
+    result: "sync-exception",
   };
 }
 
@@ -704,6 +744,14 @@ function run() {
 
     const body = current.body ?? "";
     const selectedMode = exceptionMode(body);
+    if (selectedMode.mode === "downstream-sync") {
+      const evidence = downstreamSyncEvidence(current, repository, currentPullRequest);
+      writeEvidence(evidencePath, evidence);
+      console.log(
+        `Downstream sync exception verified: ${repository}#${currentPullRequest} at ${evidence.currentHead} contains fork main ${evidence.forkMain}`,
+      );
+      return;
+    }
     if (selectedMode.mode !== "upstream-import") {
       const evidence = downstreamExceptionEvidence(
         current,
@@ -739,6 +787,7 @@ function run() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
 
 export {
+  assertForkMainContained,
   DOWNSTREAM_GOVERNANCE_PATHS,
   downstreamFeatureMarker,
   downstreamGovernanceMarker,

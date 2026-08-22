@@ -7,17 +7,19 @@ This repository is the public `ZGEnergy/paseo` fork. Keep the fork's `main` bran
 - `main` tracks `getpaseo/paseo:main`. Do not add fork-only commits to it.
 - `internal/main` receives reviewed upstream imports and internal features.
 - The scheduled or manually dispatched **Upstream sync** workflow fetches upstream `main`, fast-forwards fork `main` only when fork `main` is an ancestor, then opens or updates a `main` → `internal/main` pull request when `main` contains commits absent from `internal/main`. If there are no such commits, it exits successfully without creating or editing a pull request.
+- When the sync pull request conflicts, do not resolve it in the GitHub web editor. That commits to `main`, which breaks the mirror and fails the next sync's ancestor check. Branch from `internal/main`, merge `main` into it, resolve there, and open a `Downstream sync: true` pull request.
 - GitHub Actions scheduled workflows run from the repository default branch. Set the repository default branch to `internal/main`; the workflow asserts this configuration before any write.
 
 ## Provenance and review
 
-Internal pull requests targeting `internal/main` use one of three mutually exclusive modes:
+Internal pull requests targeting `internal/main` use one of four mutually exclusive modes:
 
 - **Upstream import** (default): identifies its upstream issue, pull request, head repository, and upstream pull-request head SHA. The **Upstream provenance** check verifies that metadata against the public upstream API, confirms the base repository, actual head repository, and SHA, compares every upstream and fork pull-request patch ID in order, and uploads reconciliation evidence. Direct imports need no human approval; reconciled imports (with `Fork main:` and `Reconciliation merge:` metadata) retain one human approval because conflict resolution requires review.
 - **Downstream governance**: uses the exact body marker `Downstream governance: true` and is restricted to the governance allowlist below. It does not assert upstream patch equivalence and does not require a pull-request review.
 - **Downstream feature**: uses exactly `Downstream feature: true` plus one non-empty `Downstream rationale:` line. It is fork-only, requires one non-author human `APPROVED` review of the current pull-request head, and cannot change governance-allowlisted files or any `.github/workflows/` file.
+- **Downstream sync**: uses exactly `Downstream sync: true`. It carries the resolution of a `main` → `internal/main` sync that conflicts and so cannot be merged as-is. The checker requires the pull-request head to contain fork `main` — GitHub comparison status `ahead` or `identical` — plus one non-author human `APPROVED` review of the current head. Changed paths are unrestricted because the content is upstream's plus the conflict resolution.
 
-Feature and governance markers cannot coexist with each other or with upstream-provenance metadata. For a downstream feature, a review on an older head, a dismissed review, an author review, or a bot review does not satisfy the exception. Any new commit invalidates prior feature approval until a reviewer approves the new head.
+Feature, governance, and sync markers cannot coexist with each other or with upstream-provenance metadata. For a downstream feature, a review on an older head, a dismissed review, an author review, or a bot review does not satisfy the exception. Any new commit invalidates prior feature approval until a reviewer approves the new head.
 
 ### Approval phases
 
