@@ -133,7 +133,7 @@ test("feature exceptions enforce phase-specific human approval evidence", () => 
   assert.match(provenance, /evidenceType: "exact-head-review"/);
   assert.match(provenance, /phase: "post-merge"/);
   assert.match(provenance, /evidenceType: "human-merger"/);
-  assert.match(provenance, /non-author human approval of the current pull request head/);
+  assert.match(provenance, /human APPROVED review of the current pull request head/);
 });
 
 test("governance exceptions do not require human approval", () => {
