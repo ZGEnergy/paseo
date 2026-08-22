@@ -5,13 +5,13 @@ phone or browser, and builds the desktop app on their own Mac.
 
 ## Where each piece comes from
 
-| Piece                | Source                                   |
-| -------------------- | ---------------------------------------- |
-| Daemon + CLI         | Built from this fork on your dev box     |
-| Browser web UI       | Served by that daemon                    |
-| iOS / Android app    | Upstream App Store / Play build          |
-| Desktop app          | Built from this fork on your own machine |
-| Relay                | Upstream default endpoint, unchanged     |
+| Piece             | Source                                   |
+| ----------------- | ---------------------------------------- |
+| Daemon + CLI      | Built from this fork on your dev box     |
+| Browser web UI    | Served by that daemon                    |
+| iOS / Android app | Upstream App Store / Play build          |
+| Desktop app       | Built from this fork on your own machine |
+| Relay             | Upstream default endpoint, unchanged     |
 
 This fork publishes no releases, so `paseo.sh/download` and `npm i -g @getpaseo/cli`
 only ever give you upstream code. Install neither on the box that runs your daemon:
