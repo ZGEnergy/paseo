@@ -93,51 +93,50 @@ test("forbids governance and workflow paths in feature mode", () => {
   );
 });
 
-test("requires a current-head approval from a non-author human", () => {
-  assert.deepEqual(resolveApproval([review()], currentHead, "author"), {
+test("requires a current-head APPROVED human review, author or not", () => {
+  assert.deepEqual(resolveApproval([review()], currentHead), {
     id: 1,
     authorLogin: "reviewer",
     authorType: "User",
     state: "APPROVED",
     commitOid: currentHead,
   });
+  // A solo maintainer is their own only reviewer, so self-approval counts.
+  assert.deepEqual(
+    resolveApproval([review({ user: { login: "author", type: "User" } })], currentHead),
+    {
+      id: 1,
+      authorLogin: "author",
+      authorType: "User",
+      state: "APPROVED",
+      commitOid: currentHead,
+    },
+  );
   for (const candidate of [
     review({ commit_id: otherHead }),
-    review({ user: { login: "author", type: "User" } }),
     review({ user: { login: "automation", type: "Bot" } }),
     review({ state: "DISMISSED" }),
   ]) {
-    assert.throws(
-      () => resolveApproval([candidate], currentHead, "author"),
-      /current pull request head/,
-    );
+    assert.throws(() => resolveApproval([candidate], currentHead), /current pull request head/);
   }
 });
 
 test("latest review state replaces an older approval", () => {
   assert.throws(
-    () =>
-      resolveApproval(
-        [review({ id: 1 }), review({ id: 2, state: "DISMISSED" })],
-        currentHead,
-        "author",
-      ),
+    () => resolveApproval([review({ id: 1 }), review({ id: 2, state: "DISMISSED" })], currentHead),
     /current pull request head/,
   );
 });
 
 test("preserves current-head approval across later comment-only reviews", () => {
   for (const state of ["COMMENTED", "PENDING"]) {
-    assert.deepEqual(
-      resolveApproval([review({ id: 1 }), review({ id: 2, state })], currentHead, "author"),
-      {
-        id: 1,
-        authorLogin: "reviewer",
-        authorType: "User",
-        state: "APPROVED",
-        commitOid: currentHead,
-      },
-    );
+    assert.deepEqual(resolveApproval([review({ id: 1 }), review({ id: 2, state })], currentHead), {
+      id: 1,
+      authorLogin: "reviewer",
+      authorType: "User",
+      state: "APPROVED",
+      commitOid: currentHead,
+    });
   }
 });
 
@@ -182,7 +181,7 @@ test("governance evidence does not require review approval", () => {
 });
 
 test("feature evidence retains effective approval", () => {
-  const approval = resolveApproval([review()], currentHead, "author");
+  const approval = resolveApproval([review()], currentHead);
   const evidence = exceptionEvidence(
     "fork/project",
     7,
