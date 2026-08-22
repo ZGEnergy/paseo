@@ -89,6 +89,17 @@ function downstreamGovernanceMarker(body) {
   return true;
 }
 
+function downstreamSyncMarker(body) {
+  const markers = markerLines(body, "Downstream sync");
+  if (!markers.length) return false;
+  if (markers.length !== 1 || markers[0] !== "Downstream sync: true") {
+    throw new Error(
+      "Pull request body must contain exactly `Downstream sync: true` when using downstream sync mode",
+    );
+  }
+  return true;
+}
+
 function downstreamFeatureMarker(body) {
   const markers = markerLines(body, "Downstream feature");
   const rationales = markerLines(body, "Downstream rationale");
@@ -115,6 +126,27 @@ function downstreamFeatureMarker(body) {
   return { rationale };
 }
 
+function assertAncestor(status, description) {
+  if (status !== "ahead" && status !== "identical") {
+    throw new Error(
+      `Downstream sync ${description} (comparison status ${status ?? "unavailable"})`,
+    );
+  }
+}
+
+function assertSyncMergeShape(parents, forkMain) {
+  if (parents.length !== 2) {
+    throw new Error(
+      `Downstream sync head must be a merge commit with exactly two parents (found ${parents.length})`,
+    );
+  }
+  if (parents[1] !== forkMain) {
+    throw new Error(
+      `Downstream sync head second parent must be fork main ${forkMain} (found ${parents[1]})`,
+    );
+  }
+}
+
 function validateChangedFileCount(files, expectedCount) {
   if (!Number.isInteger(expectedCount) || files.length !== expectedCount) {
     throw new Error(
@@ -131,21 +163,26 @@ function metadataLine(body, label) {
 function exceptionMode(body) {
   const governance = downstreamGovernanceMarker(body);
   const feature = downstreamFeatureMarker(body);
+  const sync = downstreamSyncMarker(body);
   const provenanceLabels = UPSTREAM_PROVENANCE_LABELS.filter((label) => metadataLine(body, label));
-  if (governance && feature) {
-    throw new Error("Downstream feature and downstream governance modes are mutually exclusive");
+  if ([governance, Boolean(feature), sync].filter(Boolean).length > 1) {
+    throw new Error(
+      "Downstream feature, downstream governance, and downstream sync modes are mutually exclusive",
+    );
   }
-  if ((governance || feature) && provenanceLabels.length) {
+  if ((governance || feature || sync) && provenanceLabels.length) {
     throw new Error(
       `Downstream exception mode cannot include upstream provenance metadata: ${provenanceLabels.join(", ")}`,
     );
   }
   if (feature) return { mode: "downstream-feature", rationale: feature.rationale };
   if (governance) return { mode: "downstream-governance" };
+  if (sync) return { mode: "downstream-sync" };
   return { mode: "upstream-import" };
 }
 
 function validateChangedPaths(paths, mode) {
+  if (mode === "downstream-sync") return paths;
   for (const path of paths) {
     if (
       mode === "downstream-governance"
@@ -193,6 +230,34 @@ function exceptionEvidence(repository, pullRequest, mode, rationale, scope) {
     },
     currentHead: scope.currentHead,
     result: mode === "downstream-governance" ? "governance-exception" : "feature-exception",
+  };
+}
+
+function downstreamSyncEvidence(current, repository, pullRequest) {
+  const forkMain = shaFrom(
+    ghJson(`repos/${repository}/git/ref/heads/main`).object?.sha ?? "",
+    "Fork main",
+  );
+  const scope = changedFiles(current, repository, pullRequest, "downstream-sync");
+  const head = ghJson(`repos/${repository}/commits/${scope.currentHead}`);
+  const mergeParents = Array.isArray(head.parents)
+    ? head.parents.map((parent) => shaFrom(parent?.sha ?? "", "Downstream sync merge parent"))
+    : [];
+  assertSyncMergeShape(mergeParents, forkMain);
+  assertAncestor(
+    ghJson(`repos/${repository}/compare/${mergeParents[0]}...internal/main`).status,
+    "first parent must be an ancestor of internal/main",
+  );
+  return {
+    repository,
+    pullRequest,
+    mode: "downstream-sync",
+    exception: "downstream-sync",
+    forkMain,
+    mergeParents,
+    scope: { changedFiles: scope.changedFiles },
+    currentHead: scope.currentHead,
+    result: "sync-exception",
   };
 }
 
@@ -335,6 +400,20 @@ function writeEvidence(path, evidence) {
         `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
         `- Current pull request head: \`${evidence.currentHead}\``,
         "- Result: **downstream feature exception accepted; no upstream patch equivalence asserted, no review required**",
+        "",
+      ];
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+      return;
+    }
+    if (evidence.mode === "downstream-sync") {
+      const lines = [
+        "## Downstream sync exception evidence",
+        "",
+        `- Fork main: \`${evidence.forkMain}\``,
+        `- Merge parents (ordered): \`${evidence.mergeParents.join(", ")}\``,
+        `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
+        `- Current pull request head: \`${evidence.currentHead}\``,
+        "- Result: **downstream sync exception accepted; no upstream patch equivalence asserted**",
         "",
       ];
       appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
@@ -604,6 +683,14 @@ function run() {
 
     const body = current.body ?? "";
     const selectedMode = exceptionMode(body);
+    if (selectedMode.mode === "downstream-sync") {
+      const evidence = downstreamSyncEvidence(current, repository, currentPullRequest);
+      writeEvidence(evidencePath, evidence);
+      console.log(
+        `Downstream sync exception verified: ${repository}#${currentPullRequest} at ${evidence.currentHead} contains fork main ${evidence.forkMain}`,
+      );
+      return;
+    }
     if (selectedMode.mode !== "upstream-import") {
       const evidence = downstreamExceptionEvidence(
         current,
@@ -639,6 +726,8 @@ function run() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
 
 export {
+  assertAncestor,
+  assertSyncMergeShape,
   DOWNSTREAM_GOVERNANCE_PATHS,
   downstreamFeatureMarker,
   downstreamGovernanceMarker,
@@ -646,4 +735,5 @@ export {
   exceptionMode,
   validateChangedFileCount,
   validateChangedPaths,
+  writeEvidence,
 };
