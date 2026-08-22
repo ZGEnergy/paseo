@@ -14,7 +14,7 @@ Run this flow only for a pull request that targets `internal/main`.
 4. Post the review to GitHub. Include the reviewed head SHA, verdict, high-risk findings, and advisory findings.
 5. Stop if the review finds a high-risk issue. Request changes with path and line evidence.
 6. For a clean direct import, dispatch **Upstream import merge** after the review posts.
-7. For a reconciled import, review only the conflict-resolution diff. Submit the required human approval, then dispatch **Upstream import merge**.
+7. For a reconciled import, review only the conflict-resolution diff, then dispatch **Upstream import merge**.
 8. Confirm the pull request merged with a merge commit.
 
 Do not merge a pull request with failed CI, failed provenance, a stale upstream head, or an unresolved high-risk finding.
