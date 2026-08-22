@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import {
   bootstrapLocalDaemon,
+  parseUserSystemdUnitFromCgroup,
   upgradeLocalDaemon,
   type LocalUpgradeDependencies,
   type UpgradeAttestation,
@@ -140,6 +141,10 @@ function createDependencies(
               sourceRevision: "old-revision",
               closureRoot: "/nix/store/old-paseo",
             }),
+      inspectUserUnit: () => null,
+      restartUserUnit: async (unit) => {
+        events.push(`restart:${unit}`);
+      },
     },
   };
 }
@@ -538,5 +543,114 @@ describe("local daemon upgrade transaction", () => {
     ).catch((value) => value);
     expect(cleanup).toHaveBeenCalled();
     expect(error.details.logPath).toBe("/tmp/paseo/daemon.log");
+  });
+});
+
+describe("parseUserSystemdUnitFromCgroup", () => {
+  test("returns the user unit after user@.service", () => {
+    expect(
+      parseUserSystemdUnitFromCgroup(
+        "0::/user.slice/user-1004.slice/user@1004.service/app.slice/paseo.service",
+      ),
+    ).toBe("paseo.service");
+  });
+
+  test("returns null for the user manager unit itself", () => {
+    expect(
+      parseUserSystemdUnitFromCgroup("0::/user.slice/user-1004.slice/user@1004.service"),
+    ).toBeNull();
+  });
+
+  test("returns null for an empty cgroup", () => {
+    expect(parseUserSystemdUnitFromCgroup("")).toBeNull();
+  });
+});
+
+describe("systemd-owned local upgrade", () => {
+  test("restarts the user unit instead of stop and detached start", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      inspectUserUnit: () => "paseo.service",
+      restartUserUnit: async (unit) => {
+        events.push(`restart:${unit}`);
+        await dependencies.daemon!.start!({
+          home: "/tmp/paseo",
+          executable: "/nix/store/new-paseo/bin/paseo",
+          descriptor,
+          sourceRevision: "new-revision",
+          closureRoot: "/nix/store/new-paseo",
+        });
+        events.pop();
+      },
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout" }, dependencies),
+    ).resolves.toMatchObject({ observed: { pid: 202 } });
+    expect(events).toEqual(["nix:available", "build", "root", "restart:paseo.service"]);
+  });
+
+  test("rolls back a failed unit restart without detached spawn", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    let restarts = 0;
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      inspectUserUnit: () => "paseo.service",
+      restartUserUnit: async (unit) => {
+        restarts += 1;
+        events.push(`restart:${unit}`);
+        if (restarts === 1) throw new Error("systemctl restart failed");
+      },
+    };
+    const error = await upgradeLocalDaemon(
+      { home: "/tmp/paseo", checkout: "/checkout" },
+      dependencies,
+    ).catch((value) => value);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain("systemctl restart failed");
+    expect(events.filter((event) => event.startsWith("start:"))).toEqual([]);
+    expect(events.filter((event) => event.startsWith("restart:"))).toEqual([
+      "restart:paseo.service",
+      "restart:paseo.service",
+    ]);
+    expect(events).not.toContain("stop");
+  });
+
+  test("does not restart a stale unit after ownership changes during build", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    let reads = 0;
+    let now = 0;
+    dependencies.now = () => now;
+    dependencies.sleep = async (ms) => {
+      now += ms;
+    };
+    const replacement: PidLockInfo = {
+      pid: 303,
+      startedAt: "2026-08-21T00:02:00.000Z",
+      hostname: "test",
+      uid: 1,
+      listen: descriptor.listen,
+      lifecycle: { ...lifecycle, serverId: "replacement" },
+    };
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      inspectUserUnit: () => "paseo.service",
+      readPidLock: async () => {
+        reads += 1;
+        return reads === 1
+          ? await createDependencies([]).daemon!.readPidLock("/tmp/paseo")
+          : replacement;
+      },
+      isPidRunning: (pid) => pid === 101 || pid === 303,
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout", timeoutMs: 1 }, dependencies),
+    ).rejects.toThrow("daemon lifecycle lock changed before stop");
+    expect(events.filter((event) => event.startsWith("restart:"))).toEqual([]);
+    expect(events).not.toContain("stop");
+    expect(events.filter((event) => event.startsWith("start:"))).toEqual([]);
   });
 });

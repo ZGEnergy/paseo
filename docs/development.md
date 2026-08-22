@@ -584,7 +584,9 @@ npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and regist
 Local daemon upgrades require Nix and a clean checkout on the exact `internal/main` branch. The
 upgrade never installs Nix, mutates a global npm installation, or changes `$PASEO_HOME` data. Only a
 daemon started by the CLI with a live, versioned PID lifecycle record (`manager=cli`) is eligible;
-desktop-managed, system-managed, legacy, unknown, stale, or mismatched records fail closed.
+desktop-managed, system-managed, legacy, unknown, stale, or mismatched records fail closed. If that
+CLI record's live PID belongs to a user systemd unit, the upgrade restarts the unit instead of
+spawning a detached daemon, so the unit `Environment=` (including `PATH`) survives.
 
 Run the command from a host shell (SSH or tmux), not a Paseo agent or workspace
 terminal. Those processes die when the daemon stops, and the upgrade refuses

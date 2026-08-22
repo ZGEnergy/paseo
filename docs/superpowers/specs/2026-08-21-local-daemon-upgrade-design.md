@@ -6,9 +6,10 @@ Provide one operator command from `internal/main` that upgrades a CLI-managed Pa
 
 ## Scope
 
-The command upgrades only a daemon with current, CLI-authored lifecycle metadata. It refuses desktop-managed, system-service, legacy, unknown, and unsafe daemon owners. Electron owns desktop-managed daemon lifecycle and needs a desktop-package update path.
-
-The command requires Nix. It does not install Nix, mutate the global npm installation, or modify `~/.paseo` data.
+The command upgrades only a daemon with current, CLI-authored lifecycle metadata. It
+refuses desktop-managed, pid-lock `manager=system`, legacy, unknown, and unsafe daemon
+owners. Electron owns desktop-managed daemon lifecycle and needs a desktop-package
+update path.
 
 ## Lifecycle metadata
 
@@ -28,11 +29,53 @@ The script builds the staged Nix closure itself and invokes that closure's `pase
 2. Inspect lifecycle metadata. Reject every non-CLI, invalid, legacy, desktop-managed, system-managed, or unsupported launch state before creating release roots or stopping the daemon.
 3. Build `.#paseo` while the old daemon stays online. Register the resulting closure under an immutable indirect GC root in `${XDG_DATA_HOME:-$HOME/.local/share}/paseo/releases/roots/<revision>`.
 4. Preserve the existing immutable root as `previous`, then atomically switch `${XDG_DATA_HOME:-$HOME/.local/share}/paseo/releases/current` to the new root. Retain both roots until a later successful upgrade prunes generations beyond the rollback window.
-5. Stop the old CLI-managed daemon gracefully and start the new closure with the recorded descriptor plus its expected revision and closure root.
-6. Poll health until the configured deadline. Success requires a new live PID, the unchanged server identity and listen target, and lifecycle metadata matching the expected CLI manager, source revision, and closure root.
-7. On failure, stop the new supervisor with the same graceful/force sequence and wait for its PID lock and endpoint to release. Restore `current`, restart the prior rooted closure with the recorded descriptor, verify its identity, then fail with the original upgrade error and log path.
+5. Reactivate the new closure. If the live daemon PID belongs to a user systemd unit,
+   restart that unit (see below). Otherwise stop the old CLI-managed daemon gracefully
+   and start the new closure with the recorded descriptor plus its expected revision
+   and closure root.
+6. Poll health until the configured deadline. Success requires a new live PID, the
+   unchanged server identity and listen target, and lifecycle metadata matching the
+   expected CLI manager, source revision, and closure root.
+7. On failure of an unmanaged start, stop the new supervisor with the same
+   graceful/force sequence and wait for its PID lock and endpoint to release. Restore
+   `current`, restart the prior rooted closure with the recorded descriptor, verify
+   its identity, then fail with the original upgrade error and log path. On failure
+   of a systemd-owned restart, do not SIGTERM the replacement: restore `current` /
+   `previous` and `systemctl --user restart` the same unit.
 
 A process lock prevents concurrent upgrades. The script releases it on every exit path.
+
+## Systemd-owned CLI daemons
+
+`paseo daemon start --foreground` always stamps `manager=cli`. The fork user unit
+does not set `PASEO_SYSTEM_MANAGED=1`. A systemd-supervised daemon therefore looks
+CLI-managed in the pid lock, and a detached replacement inherits the upgrader PATH
+instead of the unit `Environment=` (notably `~/.bun/bin`). systemd then races the
+replacement, hits StartLimitBurst, and latches failed.
+
+Detect ownership from the live daemon PID in the pid lock. Do not read the
+upgrader process environment: login shells and `user@.service` also set
+`INVOCATION_ID`.
+
+Parse `/proc/<pid>/cgroup` for a user-slice unit
+(`…/user@<uid>.service/…/<name>.service`). That name is the restart target. No
+user unit → keep the CLI stop + detached start path.
+
+When a unit owns the PID:
+
+- After `current` switches, re-read the live PID lock and endpoint. If ownership
+  changed, refuse before `systemctl`. Then `systemctl --user restart <unit>`. Do
+  not CLI-stop and do not detached-spawn.
+- Poll health the same way. The new process is still stamped `manager=cli`.
+- On failure after a unit restart was attempted, restore the activation links,
+  then restart the same unit. If the transaction never reached that restart,
+  restore links only. Never fall back to detached spawn.
+
+The structured result `launchOwner` stays `cli` because the pid-lock manager stays
+`cli`.
+
+Keep this branch in `packages/cli/src/commands/daemon/local-upgrade.ts` (fork-only).
+Do not change `local-daemon.ts` or pid-lock manager values for this fix.
 
 ## State and compatibility
 
@@ -50,6 +93,13 @@ Cover lifecycle metadata and the upgrade transaction through isolated tests:
 - failed startup and live-but-unhealthy health timeout stop the new supervisor before restoring and verifying the prior closure;
 - old and new rooted closures survive garbage collection during the rollback window;
 - bootstrap requires explicit launch values and creates the first stable launcher;
-- desktop-managed, system-managed, legacy, and concurrent upgrades are rejected before state changes.
+- desktop-managed, pid-lock `manager=system`, legacy, and concurrent upgrades are
+  rejected before state changes;
+- a `manager=cli` daemon whose live PID is in a user unit records a unit restart
+  and never a CLI stop or detached start;
+- a failed unit restart restores activation links and restarts the same unit, and
+  never detached-spawns;
+- the cgroup parser returns a user unit name only for `user@*.service/…/*.service`
+  and returns null for `user@.service` itself or a missing cgroup.
 
 Document the command, Nix prerequisite, CLI-managed restriction, bootstrap procedure, `PATH` activation, retained GC roots, state-preservation guarantee, and brief reconnect window in the development documentation.
