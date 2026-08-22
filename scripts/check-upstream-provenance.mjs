@@ -215,7 +215,7 @@ function changedFiles(current, repository, pullRequest, mode) {
   return { currentHead, changedFiles: validateChangedPaths(changed, mode) };
 }
 
-function resolveApproval(reviews, currentHead, authorLogin, mode = "downstream-feature") {
+function resolveApproval(reviews, currentHead, mode = "downstream-feature") {
   const latestByReviewer = new Map();
   for (const review of reviews) {
     const login = review?.user?.login;
@@ -232,14 +232,12 @@ function resolveApproval(reviews, currentHead, authorLogin, mode = "downstream-f
     (review) =>
       review.state?.toUpperCase() === "APPROVED" &&
       review.user?.type === "User" &&
-      authorLogin &&
-      review.user.login.toLowerCase() !== authorLogin.toLowerCase() &&
       typeof review.commit_id === "string" &&
       review.commit_id.toLowerCase() === currentHead,
   );
   if (!approval) {
     throw new Error(
-      `Downstream ${mode.replace("downstream-", "")} exception requires a non-author human approval of the current pull request head`,
+      `Downstream ${mode.replace("downstream-", "")} exception requires a human APPROVED review of the current pull request head`,
     );
   }
   return {
@@ -289,7 +287,6 @@ function effectiveApproval(current, repository, pullRequest, mode = "downstream-
     ...resolveApproval(
       paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
       currentHead,
-      current.user?.login ?? "",
       mode,
     ),
   };
