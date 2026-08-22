@@ -148,14 +148,20 @@ export interface OmpProviderIdleAttempt {
   /** Consecutive `get_state` rejections; any successful response resets it. */
   consecutiveFailures: number;
   /**
-   * Monotonic time since OMP last showed a sign of life: an event on the session,
-   * or a get_subagents reply naming a running child. Elapsed time alone is not a
-   * stall, so this measures silence rather than the length of the wait.
+   * Monotonic silence: time since OMP last showed a sign of life, accrued
+   * separately for each budget so time under a long one is never inherited by a
+   * shorter one. Elapsed time alone is not a stall.
    */
   elapsedMs: number;
+  /**
+   * Monotonic time since the gate opened, which no progress signal resets. Four
+   * review rounds each found a different signal that could be stuck on, so the
+   * ceiling is what makes the wait bounded without having to enumerate them.
+   */
+  totalElapsedMs: number;
   /** Whether the last observed state reported compaction in progress. */
   isCompacting: boolean;
-  /** Whether the gate is still waiting on OMP-internal subagents. */
+  /** Whether OMP-internal subagents or tool calls from this turn are outstanding. */
   isWaitingOnSubagents: boolean;
 }
 
@@ -251,22 +257,28 @@ const OMP_PROVIDER_IDLE_BUDGET_MS = 60_000;
 // against, but it still needs an end.
 const OMP_PROVIDER_COMPACTING_BUDGET_MS = 600_000;
 // A fan-out has no bounded length, so this bounds silence about one, not the
-// fan-out itself: any reply naming a running child restarts the clock.
+// fan-out itself: a reply whose running children changed restarts the clock.
 const OMP_PROVIDER_SUBAGENT_BUDGET_MS = 600_000;
 // A get_state rejection already costs a full RPC timeout, so a few in a row are
 // enough evidence that the state path is gone.
 const OMP_PROVIDER_IDLE_FAILURE_BUDGET = 3;
+// The wait no progress signal can extend. Generous enough for a real fan-out,
+// finite so an unforeseen signal stuck on cannot restore the unbounded poll.
+const OMP_PROVIDER_IDLE_CEILING_MS = 3_600_000;
 
 function ompProviderIdleRetryDelayMs(attempt: number): number {
   const backoff = OMP_PROVIDER_IDLE_MIN_RETRY_MS * 2 ** (attempt - 1);
   return Math.min(OMP_PROVIDER_IDLE_MAX_RETRY_MS, backoff);
 }
 
+// Precedence matches accrueProviderIdleSilence, which decides which bucket the
+// silence went into. If the two disagree, silence is compared against another
+// class's budget.
 function ompProviderIdleBudgetMs(waitingOnSubagents: boolean, compacting: boolean): number {
-  if (waitingOnSubagents) {
-    return OMP_PROVIDER_SUBAGENT_BUDGET_MS;
+  if (compacting) {
+    return OMP_PROVIDER_COMPACTING_BUDGET_MS;
   }
-  return compacting ? OMP_PROVIDER_COMPACTING_BUDGET_MS : OMP_PROVIDER_IDLE_BUDGET_MS;
+  return waitingOnSubagents ? OMP_PROVIDER_SUBAGENT_BUDGET_MS : OMP_PROVIDER_IDLE_BUDGET_MS;
 }
 
 export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -275,11 +287,15 @@ export function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
       attempt,
       consecutiveFailures,
       elapsedMs,
+      totalElapsedMs,
       isCompacting,
       isWaitingOnSubagents,
     }) => {
       if (consecutiveFailures >= OMP_PROVIDER_IDLE_FAILURE_BUDGET) {
         return { retry: false, reason: "failure_budget" };
+      }
+      if (totalElapsedMs >= OMP_PROVIDER_IDLE_CEILING_MS) {
+        return { retry: false, reason: "wait_budget" };
       }
       const budgetMs = ompProviderIdleBudgetMs(isWaitingOnSubagents, isCompacting);
       if (elapsedMs >= budgetMs) {
@@ -632,6 +648,22 @@ function ompStalledTurnCode(stateUnavailable: boolean, subagentsBlocked: boolean
   return subagentsBlocked ? "omp_provider_subagent_stall" : "omp_provider_idle_timeout";
 }
 
+const OMP_NON_PROGRESS_EVENT_TYPES = new Set([
+  "notice",
+  "available_commands_update",
+  "goal_updated",
+  "todo_reminder",
+]);
+
+function isOmpTurnProgressEvent(event: OmpRuntimeEvent): boolean {
+  return !OMP_NON_PROGRESS_EVENT_TYPES.has(event.type);
+}
+
+/**
+ * Progress is a reply that differs from the last one. This assumes OMP moves
+ * `lastUpdate` (or the running set) while a child works; if it does not, a child
+ * working silently for longer than the subagent budget fails the parent turn.
+ */
 function ompSubagentFingerprint(snapshots: OmpSubagentSnapshot[]): string {
   return snapshots
     .filter(
@@ -973,6 +1005,9 @@ export class OmpAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
+  /** Tool calls outlive their turn when OMP drops tool_execution_end; the gate
+   * must not treat that leak as work outstanding on a later turn. */
+  private readonly activeToolCallTurns = new Map<string, string | undefined>();
   private readonly deferredTaskResults = new Map<
     string,
     { toolCall: OmpTrackedToolCall; result: OmpToolResult }
@@ -1288,6 +1323,7 @@ export class OmpAgentSession implements AgentSession {
     await this.runtimeSession.branch(target);
     await this.refreshState();
     this.activeToolCalls.clear();
+    this.activeToolCallTurns.clear();
   }
 
   async close(): Promise<void> {
@@ -1321,6 +1357,7 @@ export class OmpAgentSession implements AgentSession {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
     }
     this.activeToolCalls.clear();
+    this.activeToolCallTurns.clear();
     for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
       this.emit(event);
     }
@@ -1866,11 +1903,14 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
-    // Any inbound frame is proof OMP is working, which is what separates a
-    // second model cycle from the stale state this gate exists to bound. Stamped
-    // here rather than in handleSessionEvent because subagent narration,
-    // auto-compaction and host-tool traffic never reach that far.
-    this.lastSessionEventAt = this.now();
+    // Only frames that mean the turn advanced count as progress. Host chatter —
+    // notices, command lists, goal timers, todo reminders — arrives on its own
+    // cadence and would otherwise refill the budget forever. Stamped here rather
+    // than in handleSessionEvent because subagent narration, auto-compaction and
+    // host-tool traffic never reach that far.
+    if (isOmpTurnProgressEvent(event)) {
+      this.lastSessionEventAt = this.now();
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -1980,6 +2020,7 @@ export class OmpAgentSession implements AgentSession {
       case "tool_execution_start": {
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
+        this.activeToolCallTurns.set(event.toolCallId, turnId);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
         return;
@@ -2063,6 +2104,7 @@ export class OmpAgentSession implements AgentSession {
     // the call active until the index has a linked child and none are running.
     if (event.toolName === "task" && !event.isError) {
       this.activeToolCalls.set(event.toolCallId, toolCall);
+      this.activeToolCallTurns.set(event.toolCallId, turnId);
       this.deferredTaskResults.set(event.toolCallId, { toolCall, result });
       this.emitToolCallEvent(event.toolCallId, toolCall, "running", result, null);
       this.settleDeferredTaskCalls();
@@ -2070,6 +2112,7 @@ export class OmpAgentSession implements AgentSession {
     }
 
     this.activeToolCalls.delete(event.toolCallId);
+    this.activeToolCallTurns.delete(event.toolCallId);
     const error = event.isError ? event.result : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
@@ -2112,6 +2155,7 @@ export class OmpAgentSession implements AgentSession {
     }
     this.deferredTaskResults.delete(toolCallId);
     this.activeToolCalls.delete(toolCallId);
+    this.activeToolCallTurns.delete(toolCallId);
     this.emitToolCallEvent(toolCallId, pending.toolCall, "completed", pending.result, null);
     this.subagentCardTracker.delete(toolCallId);
   }
@@ -2390,6 +2434,15 @@ export class OmpAgentSession implements AgentSession {
     return observed.waitingOnWork ? silence.work : silence.other;
   }
 
+  private hasActiveToolCallsFor(turnId: string | undefined): boolean {
+    for (const [toolCallId, toolCallTurnId] of this.activeToolCallTurns) {
+      if (toolCallTurnId === turnId && this.activeToolCalls.has(toolCallId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private ownsProviderIdleGate(turnId: string | undefined): boolean {
     return !this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId;
   }
@@ -2417,6 +2470,7 @@ export class OmpAgentSession implements AgentSession {
       // Silence is counted per budget class. One shared clock would make time
       // spent under the ten-minute compaction budget instantly delinquent the
       // moment the sixty-second stall budget takes over.
+      const gateStartedAt = this.now();
       const silence: OmpProviderIdleSilence = {
         compacting: 0,
         work: 0,
@@ -2467,7 +2521,7 @@ export class OmpAgentSession implements AgentSession {
         // A started tool call or an outstanding child is work Paseo can see, and
         // it earns the longer budget even when OMP says nothing about it.
         const waitingOnWork =
-          this.subagentIndex.hasRunning(this.runtimeSession) || this.activeToolCalls.size > 0;
+          this.subagentIndex.hasRunning(this.runtimeSession) || this.hasActiveToolCallsFor(turnId);
         const elapsedMs = this.accrueProviderIdleSilence(silence, subagentFingerprint, {
           compacting,
           waitingOnWork,
@@ -2476,6 +2530,7 @@ export class OmpAgentSession implements AgentSession {
           attempt,
           consecutiveFailures,
           elapsedMs,
+          totalElapsedMs: this.now() - gateStartedAt,
           isCompacting: compacting,
           isWaitingOnSubagents: waitingOnWork,
         });
@@ -2502,8 +2557,8 @@ export class OmpAgentSession implements AgentSession {
   }
 
   /**
-   * `listedRunning` reports whether OMP's own reply named a child still going.
-   * The budget restarts on that, never on the index alone.
+   * The fingerprint is what the budget compares: a reply that changed since the
+   * last one is progress. The index alone never is.
    */
   private async pollOmpSubagents(): Promise<{ running: boolean; fingerprint: string | null }> {
     let snapshots: OmpSubagentSnapshot[] | null = null;
