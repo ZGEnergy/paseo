@@ -167,6 +167,15 @@ export type OmpProviderIdleDecision =
   | { retry: true }
   | { retry: false; reason: "wait_budget" | "failure_budget" };
 
+interface OmpProviderIdleSilence {
+  compacting: number;
+  work: number;
+  other: number;
+  lastPollAt: number;
+  lastEventAt: number;
+  fingerprint: string | null;
+}
+
 export interface OmpProviderIdleScheduler {
   /** Wait before the next state check, or abandon the gate so the turn fails. */
   waitForRetry(attempt: OmpProviderIdleAttempt): Promise<OmpProviderIdleDecision>;
@@ -621,6 +630,19 @@ function ompStalledTurnCode(stateUnavailable: boolean, subagentsBlocked: boolean
     return "omp_provider_state_unavailable";
   }
   return subagentsBlocked ? "omp_provider_subagent_stall" : "omp_provider_idle_timeout";
+}
+
+function ompSubagentFingerprint(snapshots: OmpSubagentSnapshot[]): string {
+  return snapshots
+    .filter(
+      (snapshot) =>
+        snapshot.status !== "completed" &&
+        snapshot.status !== "failed" &&
+        snapshot.status !== "aborted",
+    )
+    .map((snapshot) => `${snapshot.id}:${snapshot.status}:${snapshot.lastUpdate ?? ""}`)
+    .sort()
+    .join("|");
 }
 
 /** Newest agent_end wins, unless it would discard an error the gate already holds. */
@@ -1844,6 +1866,11 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
+    // Any inbound frame is proof OMP is working, which is what separates a
+    // second model cycle from the stale state this gate exists to bound. Stamped
+    // here rather than in handleSessionEvent because subagent narration,
+    // auto-compaction and host-tool traffic never reach that far.
+    this.lastSessionEventAt = this.now();
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -1917,9 +1944,6 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleSessionEvent(event: OmpAgentSessionEvent): void {
-    // Any inbound event is proof OMP is working, which is what separates a
-    // second model cycle from the stale state this gate exists to bound.
-    this.lastSessionEventAt = this.now();
     const turnId = this.currentTurnIdForEvent();
 
     switch (event.type) {
@@ -2331,6 +2355,41 @@ export class OmpAgentSession implements AgentSession {
     this.completeTurn(turnId, messages);
   }
 
+  /**
+   * The budget spends silence, not elapsed time. An inbound frame or a subagent
+   * reply that changed since the last one is progress and clears it. A flag
+   * staying on is not: that is the stall being bounded. Each class keeps its own
+   * total so time under a long budget is not inherited by a shorter one.
+   */
+  private accrueProviderIdleSilence(
+    silence: OmpProviderIdleSilence,
+    fingerprint: string | null,
+    observed: { compacting: boolean; waitingOnWork: boolean },
+  ): number {
+    const now = this.now();
+    const progressed =
+      this.lastSessionEventAt !== silence.lastEventAt || fingerprint !== silence.fingerprint;
+    silence.lastEventAt = this.lastSessionEventAt;
+    silence.fingerprint = fingerprint;
+    const delta = now - silence.lastPollAt;
+    silence.lastPollAt = now;
+    if (progressed) {
+      silence.compacting = 0;
+      silence.work = 0;
+      silence.other = 0;
+    } else if (observed.compacting) {
+      silence.compacting += delta;
+    } else if (observed.waitingOnWork) {
+      silence.work += delta;
+    } else {
+      silence.other += delta;
+    }
+    if (observed.compacting) {
+      return silence.compacting;
+    }
+    return observed.waitingOnWork ? silence.work : silence.other;
+  }
+
   private ownsProviderIdleGate(turnId: string | undefined): boolean {
     return !this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId;
   }
@@ -2355,12 +2414,22 @@ export class OmpAgentSession implements AgentSession {
     const gate = { key, messages };
     this.providerIdleGate = gate;
     try {
-      let progressAt = this.now();
+      // Silence is counted per budget class. One shared clock would make time
+      // spent under the ten-minute compaction budget instantly delinquent the
+      // moment the sixty-second stall budget takes over.
+      const silence: OmpProviderIdleSilence = {
+        compacting: 0,
+        work: 0,
+        other: 0,
+        lastPollAt: this.now(),
+        lastEventAt: this.lastSessionEventAt,
+        fingerprint: null,
+      };
+      let subagentFingerprint: string | null = null;
       let attempt = 0;
       let consecutiveFailures = 0;
       let lastState: OmpSessionState | null = null;
       let lastError: unknown = null;
-      let subagentsRunning = false;
       let subagentsConfirmed = false;
       while (this.ownsProviderIdleGate(turnId)) {
         attempt += 1;
@@ -2373,8 +2442,10 @@ export class OmpAgentSession implements AgentSession {
           // writing after agent_end / isStreaming=false (#2232).
           const modelBusy = state.isStreaming || state.isCompacting;
           const subagents = modelBusy ? null : await this.pollOmpSubagents();
-          subagentsRunning = subagents?.running ?? subagentsRunning;
-          subagentsConfirmed = subagents?.listedRunning ?? false;
+          subagentsConfirmed = (subagents?.fingerprint ?? "") !== "";
+          if (subagents) {
+            subagentFingerprint = subagents.fingerprint ?? subagentFingerprint;
+          }
           if (subagents && !subagents.running) {
             this.completeTurnIfGateOwned(turnId, gate.messages);
             return;
@@ -2388,21 +2459,25 @@ export class OmpAgentSession implements AgentSession {
             "OMP state unavailable while waiting for provider idle",
           );
         }
-        // The budget spends silence, not elapsed time: an event on the session or
-        // a reply naming a running child restarts it. A state flag changing does
-        // not — a flag that flips back and forth would otherwise buy time forever,
-        // and a flag stuck on is the stall being bounded. The flags only choose
-        // how long the silence may last.
-        if (subagentsConfirmed) {
-          progressAt = this.now();
-        }
-        progressAt = Math.max(progressAt, this.lastSessionEventAt);
+        // The budget spends silence, not elapsed time. An inbound frame or a
+        // subagent reply that changed since the last one is progress and clears
+        // it. A flag staying on is not: that is the stall being bounded. The
+        // flags only choose how long silence may last.
+        const compacting = lastState?.isCompacting === true;
+        // A started tool call or an outstanding child is work Paseo can see, and
+        // it earns the longer budget even when OMP says nothing about it.
+        const waitingOnWork =
+          this.subagentIndex.hasRunning(this.runtimeSession) || this.activeToolCalls.size > 0;
+        const elapsedMs = this.accrueProviderIdleSilence(silence, subagentFingerprint, {
+          compacting,
+          waitingOnWork,
+        });
         const decision = await this.providerIdleScheduler.waitForRetry({
           attempt,
           consecutiveFailures,
-          elapsedMs: this.now() - progressAt,
-          isCompacting: lastState?.isCompacting === true,
-          isWaitingOnSubagents: subagentsRunning,
+          elapsedMs,
+          isCompacting: compacting,
+          isWaitingOnSubagents: waitingOnWork,
         });
         if (!decision.retry) {
           if (!this.ownsProviderIdleGate(turnId)) {
@@ -2430,7 +2505,7 @@ export class OmpAgentSession implements AgentSession {
    * `listedRunning` reports whether OMP's own reply named a child still going.
    * The budget restarts on that, never on the index alone.
    */
-  private async pollOmpSubagents(): Promise<{ running: boolean; listedRunning: boolean }> {
+  private async pollOmpSubagents(): Promise<{ running: boolean; fingerprint: string | null }> {
     let snapshots: OmpSubagentSnapshot[] | null = null;
     try {
       snapshots = await this.runtimeSession.getSubagents();
@@ -2445,16 +2520,11 @@ export class OmpAgentSession implements AgentSession {
     this.settleDeferredTaskCalls();
     return {
       // `running` is what the gate waits on (#2232) and how long the budget may
-      // run. `listedRunning` is what restarts the budget: a reply OMP actually
-      // returned naming a child still going. The index also keeps never-listed
-      // lifecycle children running, and those are not evidence of progress.
+      // run. The fingerprint is what counts as progress: a child merely being
+      // listed again is the same stuck flag the state field would be, so only a
+      // reply that changed since the last one restarts the budget.
       running: this.subagentIndex.hasRunning(this.runtimeSession),
-      listedRunning: (snapshots ?? []).some(
-        (snapshot) =>
-          snapshot.status !== "completed" &&
-          snapshot.status !== "failed" &&
-          snapshot.status !== "aborted",
-      ),
+      fingerprint: snapshots ? ompSubagentFingerprint(snapshots) : null,
     };
   }
 
