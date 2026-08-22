@@ -53,9 +53,13 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
       // Recorded, not thrown, and counted before waitCount moves: a violating
       // poll must not satisfy a waitForWaits() a test is blocked on. Denying
       // again stops the loop instead of spinning with no timer.
-      this.abandonedPolls.push(
-        `OMP polled again after the idle scheduler abandoned the gate (attempt ${attempt.attempt})`,
-      );
+      // Capped: a runaway loop must report through afterEach rather than
+      // exhausting the worker before the assertion runs.
+      if (this.abandonedPolls.length < 8) {
+        this.abandonedPolls.push(
+          `OMP polled again after the idle scheduler abandoned the gate (attempt ${attempt.attempt})`,
+        );
+      }
       return Promise.resolve({ retry: false, reason: "wait_budget" });
     }
     this.waitCount += 1;
@@ -1105,29 +1109,6 @@ describe("OMP agent client and session", () => {
     void completion;
   });
 
-  test("does not spend the idle budget on time OMP was demonstrably working", async () => {
-    let clock = 0;
-    const scheduler = new ManualIdleScheduler();
-    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
-    await omp.start();
-
-    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
-    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
-      isStreaming: false,
-      isCompacting: false,
-    });
-    await scheduler.waitForWaits(1);
-    expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(true);
-
-    // Five minutes of fan-out that OMP keeps confirming: long, but not silent.
-    clock += 300_000;
-    scheduler.retryAll();
-    await scheduler.waitForWaits(2);
-    expect(scheduler.attempts()[1]?.elapsedMs).toBeLessThan(60_000);
-    expect(omp.failedTurns()).toEqual([]);
-    void completion;
-  });
-
   test("does not let an unconfirmed subagent hold the clock open", async () => {
     let clock = 0;
     const scheduler = new ManualIdleScheduler();
@@ -1265,7 +1246,8 @@ describe("OMP agent client and session", () => {
     });
     await scheduler.waitForWaits(1);
 
-    // A flag flipping back and forth is not progress; it must not buy more time.
+    // A flag flipping back and forth is not progress, so each budget keeps its
+    // own accrued silence instead of being reset by the change.
     for (let round = 0; round < 4; round += 1) {
       clock += 60_000;
       omp.reportProviderState({
@@ -1275,7 +1257,11 @@ describe("OMP agent client and session", () => {
       scheduler.retryAll();
       await scheduler.waitForWaits(round + 2);
     }
-    expect(scheduler.attempts()[4]?.elapsedMs).toBeGreaterThanOrEqual(240_000);
+    const stallSilence = scheduler
+      .attempts()
+      .filter((attempt) => !attempt.isCompacting)
+      .map((attempt) => attempt.elapsedMs);
+    expect(stallSilence.at(-1)).toBeGreaterThanOrEqual(120_000);
     void completion;
   });
 
@@ -1332,6 +1318,149 @@ describe("OMP agent client and session", () => {
     omp.runtime().releaseStateChecks();
     for (let flush = 0; flush < 5; flush += 1) await waitForImmediate();
     expect(omp.completedTurnCount()).toBe(completedAfterCancel);
+  });
+
+  test("does not charge compaction silence to the stall budget when compaction ends", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: false,
+      isCompacting: true,
+    });
+    await scheduler.waitForWaits(1);
+
+    // Three silent minutes of auto-compaction, well inside its own budget.
+    clock += 180_000;
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.isCompacting).toBe(true);
+
+    // Compaction ends and the model resumes before emitting its first token.
+    omp.reportProviderState({ isStreaming: true, isCompacting: false });
+    scheduler.retryAll();
+    await scheduler.waitForWaits(3);
+    expect(scheduler.attempts()[2]?.isCompacting).toBe(false);
+    expect(scheduler.attempts()[2]?.elapsedMs).toBeLessThan(60_000);
+    expect(omp.failedTurns()).toEqual([]);
+    void completion;
+  });
+
+  test("does not treat an unchanging subagent snapshot as progress", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([
+      { id: "child-1", index: 0, agent: "worker", status: "running", lastUpdate: 1 },
+    ]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    // The same reply, over and over, is a stuck child rather than a working one.
+    for (let round = 0; round < 3; round += 1) {
+      clock += 120_000;
+      scheduler.retryAll();
+      await scheduler.waitForWaits(round + 2);
+    }
+    expect(scheduler.attempts()[3]?.isWaitingOnSubagents).toBe(true);
+    expect(scheduler.attempts()[3]?.elapsedMs).toBeGreaterThanOrEqual(240_000);
+    void completion;
+  });
+
+  test("counts a moving subagent snapshot as progress", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([
+      { id: "child-1", index: 0, agent: "worker", status: "running", lastUpdate: 1 },
+    ]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    clock += 120_000;
+    omp.reportSubagentSnapshots([
+      { id: "child-1", index: 0, agent: "worker", status: "running", lastUpdate: 2 },
+    ]);
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    clock += 1_000;
+    scheduler.retryAll();
+    await scheduler.waitForWaits(3);
+    expect(scheduler.attempts()[2]?.elapsedMs).toBeLessThan(120_000);
+    void completion;
+  });
+
+  test("counts a subagent progress frame as progress", async () => {
+    let clock = 0;
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, now: () => clock });
+    await omp.start();
+
+    await omp.requireStartTurn("fan out");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("fan out", "user-fan");
+    runtime.streamAssistantText("dispatching");
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: { id: "child-1", agent: "worker", status: "started", index: 0 },
+    });
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn();
+    // Legacy OMP: no snapshot path, only narration.
+    omp.failSubagentSnapshots(new Error("unknown command get_subagents"));
+    await scheduler.waitForWaits(1);
+
+    clock += 120_000;
+    runtime.emit({
+      type: "subagent_progress",
+      payload: {
+        id: "child-1",
+        agent: "worker",
+        index: 0,
+        progress: { id: "child-1", status: "running" },
+      },
+    });
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.elapsedMs).toBeLessThan(120_000);
+  });
+
+  test("stops reporting a subagent wait once the child reports done", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    omp.reportSubagentSnapshots([{ id: "child-1", index: 0, agent: "worker", status: "running" }]);
+    const { completion } = await omp.startPromptUntilProviderIdle("fan out", "dispatched", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    expect(scheduler.attempts()[0]?.isWaitingOnSubagents).toBe(true);
+
+    omp.runtime().emit({
+      type: "subagent_lifecycle",
+      payload: { id: "child-1", agent: "worker", status: "completed", index: 0 },
+    });
+    // The model goes busy, so the gate cannot re-poll get_subagents.
+    omp.reportProviderState({ isStreaming: true, isCompacting: false });
+    scheduler.retryAll();
+    await scheduler.waitForWaits(2);
+    expect(scheduler.attempts()[1]?.isWaitingOnSubagents).toBe(false);
+    void completion;
   });
 
   test("does not complete on OMP's extension-notice agent_end", async () => {
