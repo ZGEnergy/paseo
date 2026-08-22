@@ -126,10 +126,23 @@ function downstreamFeatureMarker(body) {
   return { rationale };
 }
 
-function assertForkMainContained(status) {
+function assertAncestor(status, description) {
   if (status !== "ahead" && status !== "identical") {
     throw new Error(
-      `Downstream sync head must contain fork main (comparison status ${status ?? "unavailable"})`,
+      `Downstream sync ${description} (comparison status ${status ?? "unavailable"})`,
+    );
+  }
+}
+
+function assertSyncMergeShape(parents, forkMain) {
+  if (parents.length !== 2) {
+    throw new Error(
+      `Downstream sync head must be a merge commit with exactly two parents (found ${parents.length})`,
+    );
+  }
+  if (parents[1] !== forkMain) {
+    throw new Error(
+      `Downstream sync head second parent must be fork main ${forkMain} (found ${parents[1]})`,
     );
   }
 }
@@ -202,7 +215,7 @@ function changedFiles(current, repository, pullRequest, mode) {
   return { currentHead, changedFiles: validateChangedPaths(changed, mode) };
 }
 
-function resolveApproval(reviews, currentHead, authorLogin) {
+function resolveApproval(reviews, currentHead, authorLogin, mode = "downstream-feature") {
   const latestByReviewer = new Map();
   for (const review of reviews) {
     const login = review?.user?.login;
@@ -226,7 +239,7 @@ function resolveApproval(reviews, currentHead, authorLogin) {
   );
   if (!approval) {
     throw new Error(
-      "Downstream feature exception requires a non-author human approval of the current pull request head",
+      `Downstream ${mode.replace("downstream-", "")} exception requires a non-author human approval of the current pull request head`,
     );
   }
   return {
@@ -266,7 +279,7 @@ function mergedApproval(current) {
   };
 }
 
-function effectiveApproval(current, repository, pullRequest) {
+function effectiveApproval(current, repository, pullRequest, mode = "downstream-feature") {
   const postMergeApproval = mergedApproval(current);
   if (postMergeApproval) return postMergeApproval;
   const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
@@ -277,6 +290,7 @@ function effectiveApproval(current, repository, pullRequest) {
       paginatedJson(`repos/${repository}/pulls/${pullRequest}/reviews`),
       currentHead,
       current.user?.login ?? "",
+      mode,
     ),
   };
 }
@@ -301,17 +315,30 @@ function exceptionEvidence(repository, pullRequest, mode, rationale, scope, appr
 }
 
 function downstreamSyncEvidence(current, repository, pullRequest) {
-  const currentHead = shaFrom(current.head?.sha ?? "", "Pull request head");
-  const comparison = ghJson(`repos/${repository}/compare/main...${currentHead}`);
-  assertForkMainContained(comparison.status);
+  const forkMain = shaFrom(
+    ghJson(`repos/${repository}/git/ref/heads/main`).object?.sha ?? "",
+    "Fork main",
+  );
+  const scope = changedFiles(current, repository, pullRequest, "downstream-sync");
+  const head = ghJson(`repos/${repository}/commits/${scope.currentHead}`);
+  const mergeParents = Array.isArray(head.parents)
+    ? head.parents.map((parent) => shaFrom(parent?.sha ?? "", "Downstream sync merge parent"))
+    : [];
+  assertSyncMergeShape(mergeParents, forkMain);
+  assertAncestor(
+    ghJson(`repos/${repository}/compare/${mergeParents[0]}...internal/main`).status,
+    "first parent must be an ancestor of internal/main",
+  );
   return {
     repository,
     pullRequest,
     mode: "downstream-sync",
     exception: "downstream-sync",
-    forkMain: shaFrom(comparison.base_commit?.sha ?? "", "Fork main"),
-    currentHead,
-    approval: effectiveApproval(current, repository, pullRequest),
+    forkMain,
+    mergeParents,
+    scope: { changedFiles: scope.changedFiles },
+    currentHead: scope.currentHead,
+    approval: effectiveApproval(current, repository, pullRequest, "downstream-sync"),
     result: "sync-exception",
   };
 }
@@ -475,6 +502,21 @@ function writeEvidence(path, evidence) {
         `- Current pull request head: \`${evidence.currentHead}\``,
         ...approvalSummary(evidence.approval),
         "- Result: **downstream feature exception accepted; no upstream patch equivalence asserted**",
+        "",
+      ];
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+      return;
+    }
+    if (evidence.mode === "downstream-sync") {
+      const lines = [
+        "## Downstream sync exception evidence",
+        "",
+        `- Fork main: \`${evidence.forkMain}\``,
+        `- Merge parents (ordered): \`${evidence.mergeParents.join(", ")}\``,
+        `- Changed files: \`${evidence.scope.changedFiles.join(", ")}\``,
+        `- Current pull request head: \`${evidence.currentHead}\``,
+        ...approvalSummary(evidence.approval),
+        "- Result: **downstream sync exception accepted; no upstream patch equivalence asserted**",
         "",
       ];
       appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
@@ -787,7 +829,8 @@ function run() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
 
 export {
-  assertForkMainContained,
+  assertAncestor,
+  assertSyncMergeShape,
   DOWNSTREAM_GOVERNANCE_PATHS,
   downstreamFeatureMarker,
   downstreamGovernanceMarker,
@@ -797,4 +840,5 @@ export {
   resolveApproval,
   validateChangedFileCount,
   validateChangedPaths,
+  writeEvidence,
 };
