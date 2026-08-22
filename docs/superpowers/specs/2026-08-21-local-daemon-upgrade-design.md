@@ -63,11 +63,13 @@ user unit → keep the CLI stop + detached start path.
 
 When a unit owns the PID:
 
-- After `current` switches, run `systemctl --user restart <unit>`. Do not CLI-stop
-  and do not detached-spawn.
+- After `current` switches, re-read the live PID lock and endpoint. If ownership
+  changed, refuse before `systemctl`. Then `systemctl --user restart <unit>`. Do
+  not CLI-stop and do not detached-spawn.
 - Poll health the same way. The new process is still stamped `manager=cli`.
-- On failure, restore the activation links, then restart the same unit. Never fall
-  back to detached spawn.
+- On failure after a unit restart was attempted, restore the activation links,
+  then restart the same unit. If the transaction never reached that restart,
+  restore links only. Never fall back to detached spawn.
 
 The structured result `launchOwner` stays `cli` because the pid-lock manager stays
 `cli`.

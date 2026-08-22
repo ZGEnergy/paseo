@@ -617,4 +617,40 @@ describe("systemd-owned local upgrade", () => {
     ]);
     expect(events).not.toContain("stop");
   });
+
+  test("does not restart a stale unit after ownership changes during build", async () => {
+    const events: string[] = [];
+    const dependencies = createDependencies(events);
+    let reads = 0;
+    let now = 0;
+    dependencies.now = () => now;
+    dependencies.sleep = async (ms) => {
+      now += ms;
+    };
+    const replacement: PidLockInfo = {
+      pid: 303,
+      startedAt: "2026-08-21T00:02:00.000Z",
+      hostname: "test",
+      uid: 1,
+      listen: descriptor.listen,
+      lifecycle: { ...lifecycle, serverId: "replacement" },
+    };
+    dependencies.daemon = {
+      ...dependencies.daemon,
+      inspectUserUnit: () => "paseo.service",
+      readPidLock: async () => {
+        reads += 1;
+        return reads === 1
+          ? await createDependencies([]).daemon!.readPidLock("/tmp/paseo")
+          : replacement;
+      },
+      isPidRunning: (pid) => pid === 101 || pid === 303,
+    };
+    await expect(
+      upgradeLocalDaemon({ home: "/tmp/paseo", checkout: "/checkout", timeoutMs: 1 }, dependencies),
+    ).rejects.toThrow("daemon lifecycle lock changed before stop");
+    expect(events.filter((event) => event.startsWith("restart:"))).toEqual([]);
+    expect(events).not.toContain("stop");
+    expect(events.filter((event) => event.startsWith("start:"))).toEqual([]);
+  });
 });

@@ -628,12 +628,15 @@ async function restartManagedUnit(
   deps: ResolvedUpgradeDependencies,
   home: string,
   unit: string,
+  onStarted?: (launch: UpgradeDaemonStartResult) => void,
 ): Promise<UpgradeDaemonStartResult> {
-  await deps.daemon.restartUserUnit(unit);
-  return {
+  const launch: UpgradeDaemonStartResult = {
     pid: null,
     logPath: path.join(home, "daemon.log"),
   };
+  onStarted?.(launch);
+  await deps.daemon.restartUserUnit(unit);
+  return launch;
 }
 async function pruneReleaseRoots(
   deps: ResolvedUpgradeDependencies,
@@ -883,7 +886,6 @@ async function stopExistingDaemon(
   existing: ExistingDaemonState,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (existing.userUnit) return false;
   if (action !== "upgrade" || !existing.lock || !existing.attested) return false;
   const lock = await deps.daemon.readPidLock(options.home);
   if (!matchesExistingLock(existing.lock, lock)) {
@@ -900,6 +902,7 @@ async function stopExistingDaemon(
   ) {
     throw new Error("daemon endpoint changed before destructive stop");
   }
+  if (existing.userUnit) return false;
   await deps.daemon.stop(options.home, { timeoutMs, force: false });
   await waitForRelease(deps, options.home, timeoutMs);
   return true;
@@ -929,9 +932,9 @@ async function startAndAttest(
     closureRoot,
   };
   const launch = existing.userUnit
-    ? await restartManagedUnit(deps, options.home, existing.userUnit)
+    ? await restartManagedUnit(deps, options.home, existing.userUnit, onStarted)
     : await startFromRoot(deps, options.home, closureRoot, descriptor, revision);
-  onStarted?.(launch);
+  if (!existing.userUnit) onStarted?.(launch);
   const observed = await waitForHealth(deps, options.home, expected, existing.pid, timeoutMs);
   if (action === "bootstrap" && !observed.serverId) {
     throw new Error("bootstrap health attestation missing server identity");
@@ -1046,7 +1049,7 @@ async function rollbackUpgrade(
 ): Promise<void> {
   if (existing.userUnit) {
     await restoreActivationLinks(deps, existing, releaseDir);
-    await deps.daemon.restartUserUnit(existing.userUnit);
+    if (started) await deps.daemon.restartUserUnit(existing.userUnit);
     return;
   }
   const latest = await cleanupReplacementDaemon(
