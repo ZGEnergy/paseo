@@ -7,19 +7,21 @@ This repository is the public `ZGEnergy/paseo` fork. Keep the fork's `main` bran
 - `main` tracks `getpaseo/paseo:main`. Do not add fork-only commits to it.
 - `internal/main` receives reviewed upstream imports and internal features.
 - The scheduled or manually dispatched **Upstream sync** workflow fetches upstream `main`, fast-forwards fork `main` only when fork `main` is an ancestor, then opens or updates a `main` → `internal/main` pull request when `main` contains commits absent from `internal/main`. If there are no such commits, it exits successfully without creating or editing a pull request.
+- When the sync pull request conflicts, do not resolve it in the GitHub web editor. That commits to `main`, which breaks the mirror and fails the next sync's ancestor check. Branch from `internal/main`, merge `main` into it, resolve there, and open a `Downstream sync: true` pull request. Commit the conflict resolution and nothing else: a daily sync diff runs to a few hundred files, so an unrelated edit buried in the merge will not be caught by reading it.
 - GitHub Actions scheduled workflows run from the repository default branch. Set the repository default branch to `internal/main`; the workflow asserts this configuration before any write.
 
 ## Provenance and review
 
-Internal pull requests targeting `internal/main` use one of three mutually exclusive modes:
+Internal pull requests targeting `internal/main` use one of four mutually exclusive modes:
 
 - **Upstream import** (default): identifies its upstream issue, pull request, head repository, and upstream pull-request head SHA. The **Upstream provenance** check verifies that metadata against the public upstream API, confirms the base repository, actual head repository, and SHA, and compares every upstream and fork pull-request patch ID in order (direct imports), or validates the `[upstreamHead, forkMain]` reconciliation merge commit (reconciled imports, with `Fork main:` and `Reconciliation merge:` metadata).
 - **Downstream governance**: uses the exact body marker `Downstream governance: true` and is restricted to the governance allowlist below. It does not assert upstream patch equivalence.
 - **Downstream feature**: uses exactly `Downstream feature: true` plus one non-empty `Downstream rationale:` line. It is fork-only and cannot change governance-allowlisted files or any `.github/workflows/` file.
+- **Downstream sync**: uses exactly `Downstream sync: true`. It carries the resolution of a `main` → `internal/main` sync that conflicts and so cannot be merged as-is. The checker requires the pull-request head to be a two-parent merge commit whose second parent is the live `refs/heads/main` SHA and whose first parent is an ancestor of `internal/main`. No path allowlist applies, and the merge shape constrains the commit topology rather than the tree — a merge commit can carry any content as "conflict resolution" — so nothing mechanical stops an unrelated edit riding along in this mode. Keep such work in a separate pull request under a mode that does restrict paths.
 
-Feature and governance markers cannot coexist with each other or with upstream-provenance metadata.
+Feature, governance, and sync markers cannot coexist with each other or with upstream-provenance metadata.
 
-None of the three modes requires a pull-request review. This is a single-maintainer fork, and GitHub refuses to let an author approve their own pull request, so any review requirement here would be permanently unsatisfiable. Provenance is established mechanically — from the labeled metadata fields and, for upstream imports, patch-ID or reconciliation-merge verification — not from a second human's sign-off.
+None of the four modes requires a pull-request review. This is a single-maintainer fork, and GitHub refuses to let an author approve their own pull request, so any review requirement here would be permanently unsatisfiable. Provenance is established mechanically — from the labeled metadata fields and, for upstream imports, patch-ID or reconciliation-merge verification — not from a second human's sign-off.
 
 If an upstream import is stale, the final provenance run fails and the bot does not merge it. Update its metadata or reconcile against the new upstream head, then rerun checks. Never merge an import whose upstream head changed after review.
 
