@@ -1,4 +1,4 @@
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import {
   access,
@@ -36,6 +36,20 @@ const HEALTH_POLL_MS = 100;
 const LOCK_FILENAME = "upgrade.lock";
 const CURRENT_LINK = "current";
 const PREVIOUS_LINK = "previous";
+
+export function parseUserSystemdUnitFromCgroup(cgroup: string): string | null {
+  for (const line of cgroup.split("\n")) {
+    const pathStart = line.indexOf("/");
+    if (pathStart < 0) continue;
+    const cgroupPath = line.slice(pathStart);
+    const userManager = /\/user@[^/]+\.service\//.exec(cgroupPath);
+    if (!userManager || userManager.index === undefined) continue;
+    const rest = cgroupPath.slice(userManager.index + userManager[0].length);
+    const unit = rest.split("/").findLast((part) => part.endsWith(".service"));
+    if (unit) return unit;
+  }
+  return null;
+}
 
 export interface LocalUpgradeResult {
   action: "upgrade" | "bootstrap";
@@ -86,6 +100,8 @@ export interface UpgradeDaemonDependencies {
   probe(input: { home: string; timeoutMs: number }): Promise<UpgradeAttestation | null>;
   endpointReachable(input: { home: string; timeoutMs: number }): Promise<boolean>;
   isPidRunning(pid: number): boolean;
+  inspectUserUnit(pid: number): string | null;
+  restartUserUnit(unit: string): Promise<void>;
 }
 
 export interface UpgradeFilesystemDependencies {
@@ -294,6 +310,18 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
       if (!client) return false;
       await client.close().catch(() => undefined);
       return true;
+    },
+    inspectUserUnit(pid) {
+      try {
+        return parseUserSystemdUnitFromCgroup(readFileSync(`/proc/${pid}/cgroup`, "utf8"));
+      } catch {
+        return null;
+      }
+    },
+    async restartUserUnit(unit) {
+      await execFileAsync("systemctl", ["--user", "restart", unit], {
+        timeout: DEFAULT_TIMEOUT_MS,
+      });
     },
     isPidRunning,
   };
@@ -595,6 +623,18 @@ async function startFromRoot(
     closureRoot,
   });
 }
+
+async function restartManagedUnit(
+  deps: ResolvedUpgradeDependencies,
+  home: string,
+  unit: string,
+): Promise<UpgradeDaemonStartResult> {
+  await deps.daemon.restartUserUnit(unit);
+  return {
+    pid: null,
+    logPath: path.join(home, "daemon.log"),
+  };
+}
 async function pruneReleaseRoots(
   deps: ResolvedUpgradeDependencies,
   rootsDir: string,
@@ -620,6 +660,7 @@ interface ExistingDaemonState {
   pid: number;
   current: string | null;
   previous: string | null;
+  userUnit: string | null;
 }
 
 function isValidClosureRoot(value: string | undefined): value is string {
@@ -768,6 +809,7 @@ async function inspectExistingDaemon(
       pid: 0,
       current: await readLinkOrNull(deps.fs, path.join(releaseDir, CURRENT_LINK)),
       previous: await readLinkOrNull(deps.fs, path.join(releaseDir, PREVIOUS_LINK)),
+      userUnit: null,
     };
   }
   const lifecycle = lock?.lifecycle;
@@ -789,6 +831,7 @@ async function inspectExistingDaemon(
     pid: lock.pid,
     current: activation.current,
     previous: activation.previous,
+    userUnit: deps.daemon.inspectUserUnit(lock.pid),
   };
 }
 async function stageAndSwitch(
@@ -840,6 +883,7 @@ async function stopExistingDaemon(
   existing: ExistingDaemonState,
   timeoutMs: number,
 ): Promise<boolean> {
+  if (existing.userUnit) return false;
   if (action !== "upgrade" || !existing.lock || !existing.attested) return false;
   const lock = await deps.daemon.readPidLock(options.home);
   if (!matchesExistingLock(existing.lock, lock)) {
@@ -884,7 +928,9 @@ async function startAndAttest(
     sourceRevision: revision,
     closureRoot,
   };
-  const launch = await startFromRoot(deps, options.home, closureRoot, descriptor, revision);
+  const launch = existing.userUnit
+    ? await restartManagedUnit(deps, options.home, existing.userUnit)
+    : await startFromRoot(deps, options.home, closureRoot, descriptor, revision);
   onStarted?.(launch);
   const observed = await waitForHealth(deps, options.home, expected, existing.pid, timeoutMs);
   if (action === "bootstrap" && !observed.serverId) {
@@ -998,6 +1044,11 @@ async function rollbackUpgrade(
   replacementPid: number | null,
   replacementLock: PidLockInfo | null,
 ): Promise<void> {
+  if (existing.userUnit) {
+    await restoreActivationLinks(deps, existing, releaseDir);
+    await deps.daemon.restartUserUnit(existing.userUnit);
+    return;
+  }
   const latest = await cleanupReplacementDaemon(
     deps,
     options,
@@ -1111,6 +1162,7 @@ async function runTransaction(
       pid: 0,
       current: null,
       previous: null,
+      userUnit: null,
     },
   };
   try {
