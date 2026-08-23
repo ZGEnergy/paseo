@@ -3893,6 +3893,7 @@ class ClaudeAgentSession implements AgentSession {
     const events = await this.buildPumpedMessageEvents(message, identifiers.messageId, turnId);
 
     if (this.abandonEmptyAutonomousTurn(openedAutonomousTurn, events)) {
+      this.settleLeftoverAutonomousTurn(message);
       return;
     }
     if (

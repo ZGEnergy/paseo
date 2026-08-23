@@ -1313,6 +1313,12 @@ test("a completed task_notification settles a turn opened by earlier tool_progre
 
   queryRef?.emit({
     type: "system",
+    subtype: "task_updated",
+    task_id: "sleeper-task",
+    patch: { status: "completed", end_time: 1785117455676 },
+  });
+  queryRef?.emit({
+    type: "system",
     subtype: "task_notification",
     task_id: "sleeper-task",
     tool_use_id: "toolu_sleeper",
