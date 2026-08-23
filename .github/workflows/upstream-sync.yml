@@ -101,10 +101,47 @@ jobs:
           fi
           echo "fast_forward=true" >> "$GITHUB_OUTPUT"
 
-      - name: Open or update sync pull request
+      - name: Classify merge-tree
+        id: classify
         if: steps.fast-forward.outputs.fast_forward == 'true' && steps.fast-forward.outputs.sync_needed == 'true'
+        run: |
+          set -euo pipefail
+          set +e
+          git merge-tree --write-tree origin/internal/main origin/main >"$RUNNER_TEMP/merge-tree.out" 2>"$RUNNER_TEMP/merge-tree.err"
+          set -e
+          conflicts="$(
+            { grep 'Merge conflict in ' "$RUNNER_TEMP/merge-tree.out" "$RUNNER_TEMP/merge-tree.err" || true; } |
+              sed 's/.*Merge conflict in //' | sort -u
+          )"
+          if [ -z "$conflicts" ]; then
+            echo "class=clean" >> "$GITHUB_OUTPUT"
+            echo "No merge conflicts."
+            exit 0
+          fi
+          {
+            echo "conflicts<<EOF"
+            printf '%s\n' "$conflicts"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          extra="$(printf '%s\n' "$conflicts" | grep -vE '^(nix/npm-deps\.hash|package-lock\.json)$' || true)"
+          if [ -z "$extra" ]; then
+            echo "class=derived" >> "$GITHUB_OUTPUT"
+            echo "Derived-file conflicts:"
+            printf '%s\n' "$conflicts"
+          else
+            echo "class=blocked" >> "$GITHUB_OUTPUT"
+            echo "Non-derived conflicts:"
+            printf '%s\n' "$conflicts"
+          fi
+
+      - name: Open or update sync pull request
+        if: >-
+          steps.classify.outputs.class == 'clean' ||
+          steps.classify.outputs.class == 'blocked'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CLASS: ${{ steps.classify.outputs.class }}
+          CONFLICTS: ${{ steps.classify.outputs.conflicts }}
         run: |
           set -euo pipefail
           title="Sync upstream main into internal/main"
@@ -115,3 +152,143 @@ jobs:
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
+          if [ "$CLASS" = "blocked" ]; then
+            gh pr comment "$number" --body "$(cat <<EOF
+          Sync cannot auto-resolve. Unmerged paths:
+
+          \`\`\`
+          $CONFLICTS
+          \`\`\`
+
+          Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
+          EOF
+          )"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.classify.outputs.class == 'derived'
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: cachix/install-nix-action@v31
+        if: steps.classify.outputs.class == 'derived'
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Resolve derived conflicts
+        id: resolve
+        if: steps.classify.outputs.class == 'derived'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          echo "resolved=false" >> "$GITHUB_OUTPUT"
+          git fetch origin main internal/main
+          mkdir -p "$RUNNER_TEMP/trusted-scripts"
+          git show origin/internal/main:scripts/check-upstream-provenance.mjs >"$RUNNER_TEMP/trusted-scripts/check-upstream-provenance.mjs"
+          git show origin/internal/main:scripts/update-nix.sh >"$RUNNER_TEMP/trusted-scripts/update-nix.sh"
+          git show origin/internal/main:scripts/fix-lockfile.mjs >"$RUNNER_TEMP/trusted-scripts/fix-lockfile.mjs"
+          chmod +x "$RUNNER_TEMP/trusted-scripts/update-nix.sh"
+          git checkout -B sync/downstream origin/internal/main
+          git config user.name "zge-paseo-upstream-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          set +e
+          git merge --no-edit origin/main
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
+            unmerged="$(git diff --name-only --diff-filter=U | sort -u)"
+            extra="$(printf '%s\n' "$unmerged" | grep -vE '^(nix/npm-deps\.hash|package-lock\.json)$' || true)"
+            if [ -n "$extra" ]; then
+              echo "Unexpected unmerged paths after classify:"
+              printf '%s\n' "$unmerged"
+              git merge --abort
+              exit 0
+            fi
+            if printf '%s\n' "$unmerged" | grep -qx 'package-lock.json'; then
+              git show :1:package-lock.json >"$RUNNER_TEMP/lock-base.json"
+              git show :2:package-lock.json >"$RUNNER_TEMP/lock-ours.json"
+              git show :3:package-lock.json >"$RUNNER_TEMP/lock-theirs.json"
+              if ! env -u GH_TOKEN -u GITHUB_TOKEN node "$RUNNER_TEMP/trusted-scripts/check-upstream-provenance.mjs" \
+                --merge-lockfile \
+                --base "$RUNNER_TEMP/lock-base.json" \
+                --ours "$RUNNER_TEMP/lock-ours.json" \
+                --theirs "$RUNNER_TEMP/lock-theirs.json" \
+                --out package-lock.json; then
+                echo "package-lock.json was not signature-only."
+                git merge --abort
+                exit 0
+              fi
+              git add package-lock.json
+            fi
+          fi
+
+          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$RUNNER_TEMP/trusted-scripts/update-nix.sh"; then
+            echo "update-nix.sh failed."
+            if [ -f .git/MERGE_HEAD ]; then
+              git merge --abort
+            fi
+            exit 0
+          fi
+          git add nix/npm-deps.hash package-lock.json
+          leftover="$(git diff --name-only --diff-filter=U || true)"
+          if [ -n "$leftover" ]; then
+            echo "Unmerged paths remain:"
+            printf '%s\n' "$leftover"
+            git merge --abort
+            exit 0
+          fi
+          if [ -f .git/MERGE_HEAD ]; then
+            git commit --no-edit
+          elif ! git diff --cached --quiet; then
+            git commit --amend --no-edit
+          fi
+          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$RUNNER_TEMP/trusted-scripts/update-nix.sh" --check; then
+            echo "update-nix.sh --check failed after commit."
+            exit 0
+          fi
+          git push --force origin sync/downstream
+
+          title="Sync main into internal/main"
+          body="Downstream sync: true"
+          number="$(gh pr list --base internal/main --head sync/downstream --state open --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
+          else
+            number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=sync/downstream -f base=internal/main -f body="$body" --jq '.number')"
+          fi
+
+          main_pr="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
+          if [ -n "$main_pr" ]; then
+            gh pr close "$main_pr" --comment "Superseded by derived-file resolution in #$number. Do not merge the \`main\` head pull request."
+          fi
+          echo "resolved=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open blocked pull request after failed resolve
+        if: steps.classify.outputs.class == 'derived' && steps.resolve.outputs.resolved == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CONFLICTS: ${{ steps.classify.outputs.conflicts }}
+        run: |
+          set -euo pipefail
+          title="Sync upstream main into internal/main"
+          body="Automated upstream sync from main into internal/main."
+          number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
+          if [ -n "$number" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
+          else
+            number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
+          fi
+          gh pr comment "$number" --body "$(cat <<EOF
+          Derived-file auto-resolve failed. Unmerged paths from merge-tree:
+
+          \`\`\`
+          $CONFLICTS
+          \`\`\`
+
+          Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
+          EOF
+          )"

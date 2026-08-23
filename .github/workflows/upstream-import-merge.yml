@@ -21,8 +21,7 @@ jobs:
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.pull_request.base.repo.full_name == github.repository &&
            github.event.pull_request.base.ref == 'internal/main' &&
-           github.event.pull_request.head.repo.full_name == github.repository &&
-           github.event.pull_request.head.ref != 'main') }}
+           github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
       - name: Select pull request
@@ -51,28 +50,46 @@ jobs:
         with:
           sparse-checkout: scripts/check-upstream-provenance.mjs
 
-      - name: Detect upstream import metadata
-        id: import
+      - name: Classify pull request
+        id: classify
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
         run: |
           set -euo pipefail
-          gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/pull-request-body"
-          if node --input-type=module - "$RUNNER_TEMP/pull-request-body" <<'NODE'
+          gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json body,headRefName,baseRefName,headRepository,baseRepository \
+            --jq '{body,headRefName,baseRefName,headRepository,baseRepository}' > "$RUNNER_TEMP/pull-request.json"
+          kind="$(REPOSITORY="$REPOSITORY" node --input-type=module - "$RUNNER_TEMP/pull-request.json" <<'NODE'
           import { readFileSync } from "node:fs";
-          const body = readFileSync(process.argv[2], "utf8");
-          process.exit(/^Upstream issue\s*:/im.test(body) ? 0 : 1);
+          const pullRequest = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const repository = process.env.REPOSITORY;
+          const baseRepo = pullRequest.baseRepository?.nameWithOwner;
+          const headRepo = pullRequest.headRepository?.nameWithOwner;
+          if (
+            baseRepo !== repository ||
+            headRepo !== repository ||
+            pullRequest.baseRefName !== "internal/main"
+          ) {
+            process.stdout.write("skip");
+            process.exit(0);
+          }
+          const body = pullRequest.body ?? "";
+          if (/^Downstream sync: true\s*$/m.test(body)) {
+            process.stdout.write("sync");
+          } else if (/^Upstream issue\s*:/im.test(body)) {
+            process.stdout.write("import");
+          } else if (pullRequest.headRefName === "main") {
+            process.stdout.write("clean-sync");
+          } else {
+            process.stdout.write("skip");
+          }
           NODE
-          then
-            echo "eligible=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "eligible=false" >> "$GITHUB_OUTPUT"
-          fi
+          )"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
       - name: Wait for CI checks
-        if: steps.import.outputs.eligible == 'true'
+        if: steps.classify.outputs.kind != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -125,7 +142,7 @@ jobs:
           done
 
       - name: Revalidate provenance immediately before merge
-        if: steps.import.outputs.eligible == 'true'
+        if: steps.classify.outputs.kind == 'import' || steps.classify.outputs.kind == 'sync'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -138,7 +155,7 @@ jobs:
             --evidence "$RUNNER_TEMP/reconciliation-evidence.json"
 
       - name: Merge validated import
-        if: steps.import.outputs.eligible == 'true'
+        if: steps.classify.outputs.kind == 'import'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -219,3 +236,41 @@ jobs:
           fi
           echo "head_oid=$approved_head" >> "$GITHUB_OUTPUT"
           gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false --match-head-commit "$approved_head"
+
+      - name: Merge downstream sync
+        if: steps.classify.outputs.kind == 'sync'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          head="$(gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json headRefOid --jq .headRefOid)"
+          gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false --match-head-commit "$head"
+
+      - name: Merge MERGEABLE head-main sync
+        if: steps.classify.outputs.kind == 'clean-sync'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          state=""
+          for _ in $(seq 1 30); do
+            state="$(gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json mergeable --jq .mergeable)"
+            case "$state" in
+              MERGEABLE) break ;;
+              CONFLICTING)
+                echo "Head main is CONFLICTING; not merging."
+                exit 0
+                ;;
+              *) sleep 10 ;;
+            esac
+          done
+          if [ "$state" != "MERGEABLE" ]; then
+            echo "Head main mergeable still $state after waiting; not merging."
+            exit 0
+          fi
+          head="$(gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json headRefOid --jq .headRefOid)"
+          gh pr merge "$PULL_REQUEST" --repo "$REPOSITORY" --merge --delete-branch=false --match-head-commit "$head"

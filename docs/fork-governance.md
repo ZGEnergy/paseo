@@ -6,8 +6,11 @@ This repository is the public `ZGEnergy/paseo` fork. Keep the fork's `main` bran
 
 - `main` tracks `getpaseo/paseo:main`. Do not add fork-only commits to it.
 - `internal/main` receives reviewed upstream imports and internal features.
-- The scheduled or manually dispatched **Upstream sync** workflow fetches upstream `main`, fast-forwards fork `main` only when fork `main` is an ancestor, then opens or updates a `main` → `internal/main` pull request when `main` contains commits absent from `internal/main`. If there are no such commits, it exits successfully without creating or editing a pull request.
-- When the sync pull request conflicts, do not resolve it in the GitHub web editor. That commits to `main`, which breaks the mirror and fails the next sync's ancestor check. Branch from `internal/main`, merge `main` into it, resolve there, and open a `Downstream sync: true` pull request. Commit the conflict resolution and nothing else: a daily sync diff runs to a few hundred files, so an unrelated edit buried in the merge will not be caught by reading it.
+- The scheduled or manually dispatched **Upstream sync** workflow fetches upstream `main`, fast-forwards fork `main` only when fork `main` is an ancestor, then classifies `git merge-tree origin/internal/main origin/main`:
+  - **Clean:** open or update a `main` → `internal/main` pull request. **Upstream import merge** merges it after CI while GitHub reports `MERGEABLE`.
+  - **Derived only** (`nix/npm-deps.hash` and/or `package-lock.json`): close any open `main` → `internal/main` pull request. Build `sync/downstream` from `internal/main`, merge `main`, three-way-merge the lockfile (ignore `resolved`/`integrity`; fail on any other both-changed field), run `./scripts/update-nix.sh`, and open a `Downstream sync: true` pull request. **Upstream import merge** merges that after CI and provenance.
+  - **Any other conflict:** open or update the `main` → `internal/main` pull request and comment the paths. A human branches from `internal/main`, merges `main`, resolves there, and opens a `Downstream sync: true` pull request. Commit the conflict resolution and nothing else.
+- Do not resolve a `main` → `internal/main` pull request in the GitHub web editor. That commits to `main`, which breaks the mirror and fails the next sync's ancestor check.
 - GitHub Actions scheduled workflows run from the repository default branch. Set the repository default branch to `internal/main`; the workflow asserts this configuration before any write.
 
 ## Provenance and review
