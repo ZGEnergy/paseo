@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -38,8 +38,6 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/check-upstream-port.mjs",
   "scripts/check-upstream-port.test.mjs",
   "scripts/ci-workflow.test.mjs",
-  "scripts/merge-npm-lockfile.mjs",
-  "scripts/merge-npm-lockfile.test.mjs",
   "docs/fork-governance.md",
   "CLAUDE.md",
   ".github/workflows/ci.yml",
@@ -663,7 +661,202 @@ function upstreamImportEvidence(current, repository, pullRequest, upstreamReposi
   );
 }
 
+const SIGNATURE_FIELDS = new Set(["resolved", "integrity"]);
+const TOP_LEVEL_ORDER = ["name", "version", "lockfileVersion", "requires", "packages"];
+
+class UnmergeableLockfileError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UnmergeableLockfileError";
+  }
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalize(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function lockfileDeepEqual(left, right) {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
+function cloneLockfileValue(value) {
+  return value === undefined ? undefined : structuredClone(value);
+}
+
+function stripSignatures(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+  const out = { ...entry };
+  delete out.resolved;
+  delete out.integrity;
+  return out;
+}
+
+function ownKeys(object) {
+  return object && typeof object === "object" ? Object.keys(object) : [];
+}
+
+function hasOwn(object, key) {
+  return Boolean(object) && Object.hasOwn(object, key);
+}
+
+function threeWayPresence(hasBase, hasOurs, hasTheirs, baseValue, oursValue, theirsValue, path) {
+  if (!hasOurs && !hasTheirs) return { present: false };
+  if (!hasOurs) {
+    if (!hasBase) return { present: true, value: cloneLockfileValue(theirsValue) };
+    if (lockfileDeepEqual(theirsValue, baseValue)) return { present: false };
+    throw new UnmergeableLockfileError(`${path}: delete vs change`);
+  }
+  if (!hasTheirs) {
+    if (!hasBase) return { present: true, value: cloneLockfileValue(oursValue) };
+    if (lockfileDeepEqual(oursValue, baseValue)) return { present: false };
+    throw new UnmergeableLockfileError(`${path}: delete vs change`);
+  }
+  if (lockfileDeepEqual(oursValue, theirsValue)) {
+    return { present: true, value: cloneLockfileValue(oursValue) };
+  }
+  if (hasBase && lockfileDeepEqual(oursValue, baseValue)) {
+    return { present: true, value: cloneLockfileValue(theirsValue) };
+  }
+  if (hasBase && lockfileDeepEqual(theirsValue, baseValue)) {
+    return { present: true, value: cloneLockfileValue(oursValue) };
+  }
+  if (!hasBase) {
+    throw new UnmergeableLockfileError(`${path}: both added different values`);
+  }
+  throw new UnmergeableLockfileError(`${path}: both sides changed`);
+}
+
+function mergePackageEntry(base, ours, theirs, path) {
+  const baseBody = stripSignatures(base ?? {});
+  const oursBody = stripSignatures(ours);
+  const theirsBody = stripSignatures(theirs);
+  if (lockfileDeepEqual(oursBody, theirsBody)) return oursBody;
+
+  const fieldKeys = new Set([...ownKeys(baseBody), ...ownKeys(oursBody), ...ownKeys(theirsBody)]);
+  const out = {};
+  for (const field of fieldKeys) {
+    if (SIGNATURE_FIELDS.has(field)) continue;
+    const merged = threeWayPresence(
+      hasOwn(baseBody, field),
+      hasOwn(oursBody, field),
+      hasOwn(theirsBody, field),
+      baseBody[field],
+      oursBody[field],
+      theirsBody[field],
+      `${path}.${field}`,
+    );
+    if (merged.present) out[field] = merged.value;
+  }
+  return out;
+}
+
+function mergePackages(basePackages, oursPackages, theirsPackages) {
+  const keys = new Set([
+    ...ownKeys(basePackages),
+    ...ownKeys(oursPackages),
+    ...ownKeys(theirsPackages),
+  ]);
+  const out = {};
+  for (const key of [...keys].sort()) {
+    const hasBase = hasOwn(basePackages, key);
+    const hasOurs = hasOwn(oursPackages, key);
+    const hasTheirs = hasOwn(theirsPackages, key);
+    const path = `packages[${JSON.stringify(key)}]`;
+
+    if (!hasOurs && !hasTheirs) continue;
+    if (!hasOurs) {
+      if (!hasBase) {
+        out[key] = cloneLockfileValue(theirsPackages[key]);
+        continue;
+      }
+      if (
+        lockfileDeepEqual(stripSignatures(theirsPackages[key]), stripSignatures(basePackages[key]))
+      ) {
+        continue;
+      }
+      throw new UnmergeableLockfileError(`${path}: delete vs change`);
+    }
+    if (!hasTheirs) {
+      if (!hasBase) {
+        out[key] = cloneLockfileValue(oursPackages[key]);
+        continue;
+      }
+      if (
+        lockfileDeepEqual(stripSignatures(oursPackages[key]), stripSignatures(basePackages[key]))
+      ) {
+        continue;
+      }
+      throw new UnmergeableLockfileError(`${path}: delete vs change`);
+    }
+
+    out[key] = mergePackageEntry(
+      hasBase ? basePackages[key] : {},
+      oursPackages[key],
+      theirsPackages[key],
+      path,
+    );
+  }
+  return out;
+}
+
+function mergeLockfiles(base, ours, theirs) {
+  const keys = new Set([...ownKeys(base), ...ownKeys(ours), ...ownKeys(theirs)]);
+  const out = {};
+  for (const key of keys) {
+    if (key === "packages") {
+      out.packages = mergePackages(base.packages, ours.packages, theirs.packages);
+      continue;
+    }
+    const merged = threeWayPresence(
+      hasOwn(base, key),
+      hasOwn(ours, key),
+      hasOwn(theirs, key),
+      base[key],
+      ours[key],
+      theirs[key],
+      key,
+    );
+    if (merged.present) out[key] = merged.value;
+  }
+
+  const ordered = {};
+  for (const key of TOP_LEVEL_ORDER) {
+    if (Object.hasOwn(out, key)) ordered[key] = out[key];
+  }
+  for (const key of Object.keys(out)) {
+    if (!Object.hasOwn(ordered, key)) ordered[key] = out[key];
+  }
+  return ordered;
+}
+
+function mergeLockfileCli() {
+  const base = JSON.parse(readFileSync(required("base"), "utf8"));
+  const ours = JSON.parse(readFileSync(required("ours"), "utf8"));
+  const theirs = JSON.parse(readFileSync(required("theirs"), "utf8"));
+  writeFileSync(
+    required("out"),
+    `${JSON.stringify(mergeLockfiles(base, ours, theirs), null, 2)}\n`,
+  );
+}
+
 function run() {
+  if (process.argv.includes("--merge-lockfile")) {
+    try {
+      mergeLockfileCli();
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+    return;
+  }
   try {
     const repository = repositoryFrom(required("repository"), "Repository");
     const currentPullRequest = Number(required("pull-request"));
@@ -735,6 +928,8 @@ export {
   downstreamGovernanceMarker,
   exceptionEvidence,
   exceptionMode,
+  mergeLockfiles,
+  UnmergeableLockfileError,
   validateChangedFileCount,
   validateChangedPaths,
   writeEvidence,

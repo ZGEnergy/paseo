@@ -48,8 +48,6 @@ A fork-only governance pull request may select the narrow exception only with th
 - `scripts/check-upstream-port.mjs`
 - `scripts/check-upstream-port.test.mjs`
 - `scripts/ci-workflow.test.mjs`
-- `scripts/merge-npm-lockfile.mjs`
-- `scripts/merge-npm-lockfile.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`
 - `.github/workflows/upstream-sync.yml`

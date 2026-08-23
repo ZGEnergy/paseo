@@ -58,11 +58,22 @@ jobs:
           PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
         run: |
           set -euo pipefail
-          gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json body,headRefName \
-            --jq '{body,headRefName}' > "$RUNNER_TEMP/pull-request.json"
-          kind="$(node --input-type=module - "$RUNNER_TEMP/pull-request.json" <<'NODE'
+          gh pr view "$PULL_REQUEST" --repo "$REPOSITORY" --json body,headRefName,baseRefName,headRepository,baseRepository \
+            --jq '{body,headRefName,baseRefName,headRepository,baseRepository}' > "$RUNNER_TEMP/pull-request.json"
+          kind="$(REPOSITORY="$REPOSITORY" node --input-type=module - "$RUNNER_TEMP/pull-request.json" <<'NODE'
           import { readFileSync } from "node:fs";
           const pullRequest = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const repository = process.env.REPOSITORY;
+          const baseRepo = pullRequest.baseRepository?.nameWithOwner;
+          const headRepo = pullRequest.headRepository?.nameWithOwner;
+          if (
+            baseRepo !== repository ||
+            headRepo !== repository ||
+            pullRequest.baseRefName !== "internal/main"
+          ) {
+            process.stdout.write("skip");
+            process.exit(0);
+          }
           const body = pullRequest.body ?? "";
           if (/^Downstream sync: true\s*$/m.test(body)) {
             process.stdout.write("sync");

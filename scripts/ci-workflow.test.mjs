@@ -123,9 +123,12 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(upstreamSync, /Require internal\/main as default branch/);
   assert.match(upstreamSync, /gh api --method POST "repos\/\$GITHUB_REPOSITORY\/pulls"/);
   assert.match(upstreamSync, /merge-tree/);
+  assert.match(upstreamSync, /--name-only/);
   assert.match(upstreamSync, /sync\/downstream/);
   assert.match(upstreamSync, /Downstream sync: true/);
-  assert.match(upstreamSync, /merge-npm-lockfile\.mjs/);
+  assert.match(upstreamSync, /--merge-lockfile/);
+  assert.match(upstreamSync, /trusted-scripts/);
+  assert.match(upstreamSync, /env -u GH_TOKEN -u GITHUB_TOKEN/);
   assert.match(upstreamSync, /update-nix\.sh/);
   assert.doesNotMatch(upstreamSync, /pulls\/\$number\/merge/);
 
@@ -135,6 +138,8 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(importMerge, /CONFLICTING/);
   assert.match(importMerge, /kind == 'sync'/);
   assert.match(importMerge, /kind == 'clean-sync'/);
+  assert.match(importMerge, /baseRepository/);
+  assert.match(importMerge, /baseRefName !== "internal\/main"/);
 
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
@@ -170,7 +175,7 @@ test("focused contracts stay inside existing required checks", () => {
   assert.ok(readFileSync(upstreamPortTestPath, "utf8").length > 0);
   assert.match(
     changes,
-    /node --test scripts\/ci-workflow\.test\.mjs scripts\/daemon-launch-contract\.test\.mjs scripts\/check-upstream-provenance\.test\.mjs scripts\/check-upstream-port\.test\.mjs scripts\/merge-npm-lockfile\.test\.mjs/,
+    /node --test scripts\/ci-workflow\.test\.mjs scripts\/daemon-launch-contract\.test\.mjs scripts\/check-upstream-provenance\.test\.mjs scripts\/check-upstream-port\.test\.mjs/,
   );
   assert.match(changes, /scripts\/daemon-launch-contract\.test\.mjs/);
   assert.doesNotMatch(changes, /Install dependencies|npm run build/);
