@@ -8,6 +8,7 @@ const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const upstreamSyncWorkflowPath = new URL(".github/workflows/upstream-sync.yml", repoRoot);
+const importMergeWorkflowPath = new URL(".github/workflows/upstream-import-merge.yml", repoRoot);
 const relayDeployWorkflowPath = new URL(".github/workflows/deploy-relay.yml", repoRoot);
 const provenanceScriptPath = new URL("scripts/check-upstream-provenance.mjs", repoRoot);
 const upstreamPortTestPath = new URL("scripts/check-upstream-port.test.mjs", repoRoot);
@@ -116,11 +117,24 @@ test("change gating allows superseded workflow runs to cancel", () => {
 
 test("fork governance workflows retain their enforcement boundaries", () => {
   const upstreamSync = readFileSync(upstreamSyncWorkflowPath, "utf8");
+  const importMerge = readFileSync(importMergeWorkflowPath, "utf8");
   const relayDeploy = readFileSync(relayDeployWorkflowPath, "utf8");
 
   assert.match(upstreamSync, /Require internal\/main as default branch/);
   assert.match(upstreamSync, /gh api --method POST "repos\/\$GITHUB_REPOSITORY\/pulls"/);
+  assert.match(upstreamSync, /merge-tree/);
+  assert.match(upstreamSync, /sync\/downstream/);
+  assert.match(upstreamSync, /Downstream sync: true/);
+  assert.match(upstreamSync, /merge-npm-lockfile\.mjs/);
+  assert.match(upstreamSync, /update-nix\.sh/);
   assert.doesNotMatch(upstreamSync, /pulls\/\$number\/merge/);
+
+  assert.doesNotMatch(importMerge, /head\.ref != 'main'/);
+  assert.match(importMerge, /Downstream sync: true/);
+  assert.match(importMerge, /MERGEABLE/);
+  assert.match(importMerge, /CONFLICTING/);
+  assert.match(importMerge, /kind == 'sync'/);
+  assert.match(importMerge, /kind == 'clean-sync'/);
 
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
@@ -156,7 +170,7 @@ test("focused contracts stay inside existing required checks", () => {
   assert.ok(readFileSync(upstreamPortTestPath, "utf8").length > 0);
   assert.match(
     changes,
-    /node --test scripts\/ci-workflow\.test\.mjs scripts\/daemon-launch-contract\.test\.mjs scripts\/check-upstream-provenance\.test\.mjs scripts\/check-upstream-port\.test\.mjs/,
+    /node --test scripts\/ci-workflow\.test\.mjs scripts\/daemon-launch-contract\.test\.mjs scripts\/check-upstream-provenance\.test\.mjs scripts\/check-upstream-port\.test\.mjs scripts\/merge-npm-lockfile\.test\.mjs/,
   );
   assert.match(changes, /scripts\/daemon-launch-contract\.test\.mjs/);
   assert.doesNotMatch(changes, /Install dependencies|npm run build/);

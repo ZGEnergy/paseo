@@ -21,7 +21,7 @@ permissions:
 jobs:
   reconcile:
     # main -> internal/main is created by the sync workflow and has no upstream
-    # feature metadata; its CI and required human review provide the gate.
+    # feature metadata; CI plus MERGEABLE are the gate. Import-merge lands it.
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||

@@ -38,6 +38,8 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "scripts/check-upstream-port.mjs",
   "scripts/check-upstream-port.test.mjs",
   "scripts/ci-workflow.test.mjs",
+  "scripts/merge-npm-lockfile.mjs",
+  "scripts/merge-npm-lockfile.test.mjs",
   "docs/fork-governance.md",
   "CLAUDE.md",
   ".github/workflows/ci.yml",
