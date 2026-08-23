@@ -497,14 +497,14 @@ test("trailing output from an interrupted request does not start a turn", async 
   query()?.emit(buildAbortedResult(sessionId));
   query()?.emit(buildRejectedToolResult(sessionId));
 
-  // Frames are translated in order, so the rejection landing proves the two before it were read.
+  // The notification is metadata and must still be applied. Waiting for it
+  // proves the interrupt-window frames were read without opening a turn.
   await waitFor(() =>
     observed.some(
       (event) =>
         event.type === "timeline" &&
         event.item.type === "tool_call" &&
-        event.item.callId === "toolu_slow" &&
-        event.item.status === "failed",
+        event.item.callId === "task_notification_task-notification-1",
     ),
   );
   unsubscribe();
@@ -1040,5 +1040,201 @@ test("auto-completes an open autonomous turn when a foreground prompt starts", a
   ]);
 
   subscribedEvents.close();
+  await session.close();
+});
+
+test("a late completed task_notification settles the autonomous turn it opened", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+  const sessionId = "reviewer-leftover-notification-session";
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "review the pr") {
+          return;
+        }
+        query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "reviewer-task",
+          tool_use_id: "toolu_reviewer",
+          task_type: "local_agent",
+          subagent_type: "general-purpose",
+          description: "Return a review",
+        });
+        query.emit({
+          type: "assistant",
+          message: { content: "REVIEW: looks good" },
+          session_id: sessionId,
+        });
+        query.emit(buildSuccessResult(sessionId));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const seedEvents = await collectUntilTerminal(streamSession(session, "review the pr"));
+  expect(collectAssistantText(seedEvents)).toContain("REVIEW: looks good");
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  queryRef?.emit({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "reviewer-task",
+    tool_use_id: "toolu_reviewer",
+    status: "completed",
+  });
+
+  await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+
+  expect(
+    observed.some(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "upsert" &&
+        event.event.id === "toolu_reviewer" &&
+        event.event.status === "completed",
+    ),
+  ).toBe(true);
+  expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(observed.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+  unsubscribe();
+  await session.close();
+});
+
+test("a still-running declared child keeps the autonomous turn open", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+  const sessionId = "live-background-child-session";
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "spawn sleeper") {
+          return;
+        }
+        query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "sleeper-task",
+          tool_use_id: "toolu_sleeper",
+          task_type: "local_agent",
+          subagent_type: "general-purpose",
+          description: "sleep",
+        });
+        query.emit({
+          type: "assistant",
+          message: { content: "SPAWNED" },
+          session_id: sessionId,
+        });
+        query.emit(buildSuccessResult(sessionId));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "spawn sleeper"));
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  queryRef?.emit({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "sleeper-task",
+    tool_use_id: "toolu_sleeper",
+    status: "running",
+  });
+
+  await waitFor(() => observed.some((event) => event.type === "turn_started"));
+  expect(observed.some((event) => event.type === "turn_completed")).toBe(false);
+  unsubscribe();
+  await session.close();
+});
+
+test("assistant output after a finished turn still opens an autonomous turn", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+  const sessionId = "reviewer-real-wake-session";
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "review the pr") {
+          return;
+        }
+        query.emit({
+          type: "assistant",
+          message: { content: "REVIEW: looks good" },
+          session_id: sessionId,
+        });
+        query.emit(buildSuccessResult(sessionId));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "review the pr"));
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  queryRef?.emit({
+    type: "assistant",
+    message: { content: "FOLLOW_UP_REPLY" },
+    session_id: sessionId,
+  });
+  queryRef?.emit(buildSuccessResult(sessionId));
+
+  await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+
+  expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(collectAssistantText(observed)).toContain("FOLLOW_UP_REPLY");
+  unsubscribe();
   await session.close();
 });

@@ -421,6 +421,15 @@ describe("ClaudeTaskProtocolSource", () => {
     expect(source.cancelRunningForegroundTasks()).toEqual([]);
   });
 
+  it("hasRunningTasks is true until the declared child settles", () => {
+    const source = new ClaudeTaskProtocolSource();
+    expect(source.hasRunningTasks()).toBe(false);
+    source.observe(taskStarted());
+    expect(source.hasRunningTasks()).toBe(true);
+    source.observe(taskNotification("completed"));
+    expect(source.hasRunningTasks()).toBe(false);
+  });
+
   it("does not cancel a backgrounded subagent, which outlives the turn", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted());

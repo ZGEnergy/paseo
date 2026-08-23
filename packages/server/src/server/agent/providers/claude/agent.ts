@@ -3809,10 +3809,9 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   /**
-   * Claude keeps talking about the request it was told to kill — the notification for the tool it
-   * just stopped, trailing assistant output. That is not new work, so it must not open a turn: the
-   * only message that would close that turn is the result shouldSuppressStaleResult drops, leaving
-   * the agent stuck reporting "running" forever.
+   * Same wake rule as upstream #3366, plus the interrupt-window guard.
+   * A leftover terminal notification must not keep the agent running once
+   * every declared child has settled.
    */
   private shouldStartAutonomousTurn(message: SDKMessage): boolean {
     if (this.activeForegroundTurnId || this.pendingInterruptAbort) {
@@ -3821,13 +3820,40 @@ class ClaudeAgentSession implements AgentSession {
     return this.isAssistantishMessage(message);
   }
 
+  private abandonEmptyAutonomousTurn(
+    openedAutonomousTurn: boolean,
+    events: AgentStreamEvent[],
+  ): boolean {
+    if (events.length > 0) {
+      return false;
+    }
+    if (openedAutonomousTurn && !this.taskProtocolSource.hasRunningTasks()) {
+      this.completeAutonomousTurn();
+    }
+    return true;
+  }
+
+  private settleLeftoverAutonomousTurn(openedAutonomousTurn: boolean, message: SDKMessage): void {
+    if (!openedAutonomousTurn) {
+      return;
+    }
+    if (message.type !== "system" || message.subtype !== "task_notification") {
+      return;
+    }
+    if (this.taskProtocolSource.hasRunningTasks()) {
+      return;
+    }
+    this.completeAutonomousTurn();
+  }
+
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
 
     const isForeground = Boolean(this.activeForegroundTurnId);
-    if (this.shouldStartAutonomousTurn(message)) {
+    const openedAutonomousTurn = !this.autonomousTurn && this.shouldStartAutonomousTurn(message);
+    if (openedAutonomousTurn) {
       this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
@@ -3853,7 +3879,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const events = await this.buildPumpedMessageEvents(message, identifiers.messageId, turnId);
 
-    if (events.length === 0) {
+    if (this.abandonEmptyAutonomousTurn(openedAutonomousTurn, events)) {
       return;
     }
     if (
@@ -3884,6 +3910,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.dispatchEvents(events);
+    this.settleLeftoverAutonomousTurn(openedAutonomousTurn, message);
   }
 
   private async buildPumpedMessageEvents(

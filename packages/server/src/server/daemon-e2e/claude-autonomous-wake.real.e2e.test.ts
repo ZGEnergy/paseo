@@ -626,8 +626,8 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       expect(helloFinish.status).toBe("idle");
 
       // The second background task may complete before, during, or after
-      // HELLO. When it races with HELLO, the notification is handled during
-      // the foreground turn and there is no separate autonomous running edge.
+      // HELLO. A reply to it is the autonomous running edge. If HELLO already
+      // absorbed that reply, there is no separate edge.
       const autonomousWake = await client
         .waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 15_000)
         .catch(() => null);
