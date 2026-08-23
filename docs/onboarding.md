@@ -15,14 +15,14 @@ phone or browser, and builds the desktop app on their own Mac.
 
 This fork publishes no releases, so `paseo.sh/download` and `npm i -g @getpaseo/cli`
 only ever give you upstream code. Install neither on the box that runs your daemon:
-`upgrade-local` accepts only a daemon it started itself (`manager=cli`), so an
+`upgrade-local` accepts only a live, attested `manager=cli` lifecycle record, so an
 upstream-installed daemon has to be stopped and re-bootstrapped before it can take
 fork changes.
 
 Upstream client apps are fine and expected. The protocol stays backward compatible
 (see [protocol-compatibility.md](protocol-compatibility.md)), so an upstream app pairs
-with a fork daemon normally. It just won't carry fork-only app changes — the browser
-web UI is the client that does.
+with a fork daemon normally. It won't carry fork-only app changes; the browser web UI
+is the client that does.
 
 ## Bootstrap the daemon
 
@@ -47,11 +47,14 @@ npm run upgrade:local -- --bootstrap \
   --hostnames false
 ```
 
-Every launch value is explicit — bootstrap infers nothing from the environment or from
-a previous process. `--relay true` is what lets phones and laptops reach the box;
-prefer `--relay false` with a `--hostnames` allowlist if you reach it over Tailscale or
-another VPN instead. Put `${XDG_BIN_HOME:-~/.local/bin}` first on `PATH` so the
-launcher this installs is the `paseo` you get.
+`--relay true` is what lets phones and laptops reach a loopback-bound daemon. To reach
+it over Tailscale or another VPN instead, set `--relay false`, bind to the tailnet
+address or `0.0.0.0:6767` with `--listen`, and pass the hostnames clients will use to
+`--hostnames`. That flag is a Host-header allowlist against DNS rebinding, not a bind
+address, so an allowlist alone leaves a loopback daemon unreachable.
+
+Put `${XDG_BIN_HOME:-~/.local/bin}` first on `PATH` so the launcher this installs is
+the `paseo` you get.
 
 Existing `$PASEO_HOME` state survives — pairing, agents, worktrees, and config are
 untouched.
@@ -68,7 +71,9 @@ does: staged closures, activation links, the rollback window, and the systemd ca
 
 ## Connect a client
 
-**Phone or laptop app:** Settings → your host → Pair Device.
+**Phone or laptop app:** run `paseo daemon pair` on the box for the QR code and link.
+A fresh client has no host to select yet, so this is the first-connection path; the
+app's own Pair device screen is for a host it already knows.
 
 **Browser:** the daemon serves the web app from its own address, so with a loopback
 listen you want a tunnel:
@@ -83,9 +88,9 @@ covers exposing it properly behind a reverse proxy or TLS.
 ## Build the desktop app on your Mac
 
 Build it from a fork checkout. Don't install the download from `paseo.sh`: the fork
-disables desktop auto-update precisely because `electron-builder.yml` still names
-upstream as its publish target, so a packaged fork build would otherwise replace
-itself with an upstream one. See
+disables desktop auto-update because `electron-builder.yml` still names upstream as
+its publish target, so a packaged fork build would otherwise replace itself with an
+upstream one. See
 [fork-governance.md](fork-governance.md#release-and-relay-isolation).
 
 ```bash
@@ -93,9 +98,8 @@ npm ci
 npm run build:desktop
 ```
 
-Artifacts land in `packages/desktop/release/`. The build is ad-hoc signed: it runs on
-the machine that produced it and is not distributable. Clear the quarantine attribute
-after installing:
+Artifacts land in `packages/desktop/release/`. The build is ad-hoc signed and runs only
+on the machine that produced it. Clear the quarantine attribute after installing:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Paseo.app
