@@ -73,4 +73,6 @@ This fork must not publish to upstream release destinations. Release workflows m
 
 Desktop auto-update is off in this fork. `packages/desktop/electron-builder.yml` still names `getpaseo/paseo` as its publish target, so the `app-update.yml` baked into a packaged build resolves to upstream's releases; an enabled updater would replace a fork build with an upstream one. `packages/desktop/src/features/auto-updater.ts` short-circuits the update check, the download-and-install path, and the install-on-quit path unless `PASEO_FORK_ENABLE_AUTO_UPDATE=1`. Set that variable only once this fork publishes desktop releases and `electron-builder.yml` points at them.
 
-Build the desktop app locally with `npm run build:desktop`. macOS builds here are unsigned and unnotarized, so clear the quarantine attribute after installing: `xattr -dr com.apple.quarantine /Applications/Paseo.app`.
+Build the desktop app locally with `npm run build:desktop`. macOS builds here are ad-hoc signed and not notarized, so clear the quarantine attribute after installing: `xattr -dr com.apple.quarantine /Applications/Paseo.app`.
+
+New teammates start at [onboarding.md](onboarding.md).

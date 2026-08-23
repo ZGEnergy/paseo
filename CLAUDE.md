@@ -61,6 +61,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/terminal-activity.md](docs/terminal-activity.md)             | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                         | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [docs/fork-governance.md](docs/fork-governance.md)                 | Public fork branch model, upstream sync, provenance, and relay isolation                                                       |
+| [docs/onboarding.md](docs/onboarding.md)                           | Getting a teammate onto the fork: daemon bootstrap, clients, local desktop builds                                              |
 | [public-docs/hub/security.md](public-docs/hub/security.md)         | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
 
 ### Writing docs
