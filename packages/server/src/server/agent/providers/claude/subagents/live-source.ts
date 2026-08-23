@@ -229,6 +229,15 @@ export class ClaudeTaskProtocolSource {
     return subagentId !== undefined && this.declaredIds.has(subagentId);
   }
 
+  hasRunningTasks(): boolean {
+    for (const id of this.declaredIds) {
+      if (this.lastStatusById.get(id) === "running") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   needsSyntheticParentToolCard(subagentId: string): boolean {
     return !this.idsWithExistingParentToolCard.has(subagentId);
   }
