@@ -135,7 +135,7 @@ async function seedRestartHome(): Promise<SeededRestartHome> {
     path.join(agentDir, `${LEGACY_AGENT_ID}.json`),
     JSON.stringify({
       id: LEGACY_AGENT_ID,
-      provider: "codex",
+      provider: "mock",
       cwd,
       createdAt: "2026-03-01T12:00:00.000Z",
       updatedAt: "2026-03-01T12:00:00.000Z",
@@ -144,9 +144,9 @@ async function seedRestartHome(): Promise<SeededRestartHome> {
       title: "Legacy cwd-only running agent",
       labels: {},
       lastStatus: "running",
-      lastModeId: "default",
-      config: null,
-      runtimeInfo: { provider: "codex", sessionId: null },
+      lastModeId: "load-test",
+      config: { modeId: "load-test", model: "ten-second-stream" },
+      runtimeInfo: { provider: "mock", sessionId: null },
       persistence: null,
       archivedAt: null,
     }),
@@ -349,12 +349,9 @@ async function seedBrowserForDaemon(page: Page, input: { serverId: string; port:
     {
       daemon: host,
       preferences: {
-        provider: "codex",
+        provider: "mock",
         providerPreferences: {
-          codex: {
-            model: "gpt-5.4-mini",
-            thinkingByModel: { "gpt-5.4-mini": "low" },
-          },
+          mock: { mode: "load-test", model: "ten-second-stream" },
         },
       } satisfies FormPreferences,
     },
@@ -458,10 +455,17 @@ test.describe("Workspace model restart regressions", () => {
 
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
       await waitForSidebarHydration(page);
+      // Opening the workspace mounts the agent tab. The seeded record has
+      // lastStatus=running and persistence=null, so ensureAgentLoaded creates a
+      // fresh session and the persisted running snapshot goes away. Assert the
+      // sidebar after that settle; requiring running here races the load.
+      await expect
+        .poll(async () => (await fetchLegacyAgent(client))?.status ?? null, { timeout: 30_000 })
+        .toBe("idle");
       await expectWorkspaceRowHasOnlyIndicator(page, {
         serverId,
         workspaceId: seeded.workspaceA,
-        indicator: "running",
+        indicator: "done",
       });
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
@@ -511,10 +515,11 @@ test.describe("Workspace model restart regressions", () => {
           [createdWorkspaceId]: "done",
         });
 
-      // The restarted provider session may settle while the browser creates the sibling. Its
-      // initial running status is asserted above; this phase verifies that ownership never moves.
+      // Ownership must stay on workspace A after the sibling exists. The
+      // persisted running snapshot was already asserted before navigation;
+      // the live session is idle after load.
       const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
-      expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
+      expect(workspaceStatuses[seeded.workspaceA]).toBe("done");
 
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
