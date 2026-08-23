@@ -1183,6 +1183,148 @@ test("a still-running declared child keeps the autonomous turn open", async () =
   await session.close();
 });
 
+test("an empty stream_event message_start keeps the autonomous turn open", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+  const sessionId = "stream-start-keeps-turn-session";
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "review the pr") {
+          return;
+        }
+        query.emit({
+          type: "assistant",
+          message: { content: "REVIEW: looks good" },
+          session_id: sessionId,
+        });
+        query.emit(buildSuccessResult(sessionId));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "review the pr"));
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  queryRef?.emit({
+    type: "stream_event",
+    event: {
+      type: "message_start",
+      message: { id: "message-autonomous-1", role: "assistant", model: "opus" },
+    },
+  });
+
+  await waitFor(() => observed.some((event) => event.type === "turn_started"));
+  expect(observed.some((event) => event.type === "turn_completed")).toBe(false);
+
+  queryRef?.emit({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      message_id: "message-autonomous-1",
+      delta: { type: "text_delta", text: "FOLLOW_UP_STREAM" },
+    },
+  });
+  queryRef?.emit(buildSuccessResult(sessionId));
+
+  await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+  expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  expect(collectAssistantText(observed)).toContain("FOLLOW_UP_STREAM");
+  unsubscribe();
+  await session.close();
+});
+
+test("a completed task_notification settles a turn opened by earlier tool_progress", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+  const sessionId = "progress-then-complete-session";
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId,
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "spawn sleeper") {
+          return;
+        }
+        query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "sleeper-task",
+          tool_use_id: "toolu_sleeper",
+          task_type: "local_agent",
+          subagent_type: "general-purpose",
+          description: "sleep",
+        });
+        query.emit({
+          type: "assistant",
+          message: { content: "SPAWNED" },
+          session_id: sessionId,
+        });
+        query.emit(buildSuccessResult(sessionId));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "spawn sleeper"));
+
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observed.push(event);
+  });
+
+  queryRef?.emit({
+    type: "tool_progress",
+    tool_use_id: "toolu_sleeper",
+    tool_name: "Task",
+  });
+
+  await waitFor(() => observed.some((event) => event.type === "turn_started"));
+  expect(observed.some((event) => event.type === "turn_completed")).toBe(false);
+
+  queryRef?.emit({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "sleeper-task",
+    tool_use_id: "toolu_sleeper",
+    status: "completed",
+  });
+
+  await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+  expect(observed.filter((event) => event.type === "turn_started")).toHaveLength(1);
+  unsubscribe();
+  await session.close();
+});
+
 test("assistant output after a finished turn still opens an autonomous turn", async () => {
   const logger = createTestLogger();
   let queryRef: ScriptedQuery | null = null;
