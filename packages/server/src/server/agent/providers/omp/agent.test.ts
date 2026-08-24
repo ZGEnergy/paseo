@@ -2012,7 +2012,7 @@ describe("OMP agent client and session", () => {
     expect(omp.isClosed()).toBe(true);
   });
 
-  test("interrupt terminalizes in-flight tool calls and running subagents", async () => {
+  test("interrupt cancels in-flight tools but preserves independently running subagents", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
@@ -2042,12 +2042,8 @@ describe("OMP agent client and session", () => {
 
     expect(omp.canceledTurnCount()).toBe(1);
     expect(omp.runningToolCallIds()).toEqual([]);
-    expect(omp.subagentUpserts()).toEqual([
-      { id: "child-1", status: "running" },
-      { id: "child-1", status: "canceled" },
-    ]);
+    expect(omp.subagentUpserts()).toEqual([{ id: "child-1", status: "running" }]);
 
-    // Late progress after interrupt must not resurrect a running card.
     runtime.emit({
       type: "subagent_progress",
       payload: {
@@ -2059,6 +2055,19 @@ describe("OMP agent client and session", () => {
       },
     });
     expect(omp.runningToolCallIds()).toEqual([]);
+    expect(omp.subagentUpserts().at(-1)).toEqual({ id: "child-1", status: "running" });
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "child-1",
+        agent: "worker",
+        status: "completed",
+        parentToolCallId: "tool-1",
+        index: 0,
+      },
+    });
+    expect(omp.subagentUpserts().at(-1)).toEqual({ id: "child-1", status: "completed" });
   });
 
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {

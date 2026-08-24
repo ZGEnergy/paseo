@@ -191,6 +191,63 @@ describe("OMP provider subagent mapper", () => {
     expect(index.hasRunning(parent)).toBe(false);
   });
 
+  test("marks a child complete from incremental successful yield messages", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+
+    index.handleEvent(parent, {
+      id: "child-1",
+      event: {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "yield-1",
+              name: "yield",
+              arguments: { type: null, result: { data: "done" } },
+            },
+          ],
+        },
+      },
+    });
+    expect(index.hasRunning(parent)).toBe(true);
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "message_end",
+          message: {
+            role: "toolResult",
+            toolCallId: "yield-1",
+            toolName: "yield",
+            content: [{ type: "text", text: "Result submitted." }],
+            isError: false,
+            details: { data: "done", status: "success" },
+          },
+        },
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "child-1",
+          status: "completed",
+        }),
+      }),
+    );
+    expect(index.hasRunning(parent)).toBe(false);
+  });
+
   test("does not complete ambiguous or aborted terminal yields", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
