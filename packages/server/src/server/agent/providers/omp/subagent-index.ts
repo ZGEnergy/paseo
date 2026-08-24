@@ -16,6 +16,7 @@ interface OmpSubagentState {
   resolvedModel: string | null;
   toolCallId: string | null;
   status: "running" | "completed" | "failed" | "canceled";
+  pendingYieldToolCallId: string | null;
   seenInSnapshot: boolean;
   mapper: OmpHistoryMapper;
 }
@@ -25,6 +26,7 @@ export class OmpSubagentIndex {
 
   handleLifecycle(parent: object, payload: OmpSubagentLifecyclePayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, payload.agent);
+    if (payload.status === "started") state.pendingYieldToolCallId = null;
     state.title = payload.agent || state.title;
     state.description = payload.description ?? state.description;
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
@@ -50,6 +52,7 @@ export class OmpSubagentIndex {
 
   handleEvent(parent: object, payload: OmpSubagentEventPayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, "OMP subagent");
+    const completedFromIncrementalYield = observeIncrementalTerminalYield(state, payload.event);
     const events: AgentStreamEvent[] = state.mapper
       .mapMessages(messagesFromSessionEvent(payload.event))
       .flatMap((mapped) =>
@@ -69,9 +72,9 @@ export class OmpSubagentIndex {
           : [],
       );
     if (
-      payload.event.type === "agent_end" &&
       state.status === "running" &&
-      hasSuccessfulTerminalYield(payload.event.messages)
+      (completedFromIncrementalYield ||
+        (payload.event.type === "agent_end" && hasSuccessfulTerminalYield(payload.event.messages)))
     ) {
       state.status = "completed";
       events.push(this.upsert(payload.id, state.status, state));
@@ -183,6 +186,7 @@ export class OmpSubagentIndex {
       resolvedModel: null,
       toolCallId: null,
       status: "running",
+      pendingYieldToolCallId: null,
       seenInSnapshot: false,
       mapper: new OmpHistoryMapper("omp", [], OMP_HISTORY_MAPPER_HOOKS),
     };
@@ -216,6 +220,30 @@ function messagesFromSessionEvent(event: OmpAgentSessionEvent): OmpAgentMessage[
   return [];
 }
 
+function observeIncrementalTerminalYield(
+  state: OmpSubagentState,
+  event: OmpAgentSessionEvent,
+): boolean {
+  if (event.type !== "message_end") return false;
+  const message = event.message;
+  if (message.role === "assistant") {
+    state.pendingYieldToolCallId = null;
+    if (message.errorMessage) return false;
+    const toolCall = message.content.findLast((content) => content.type === "toolCall");
+    if (toolCall?.name === "yield") state.pendingYieldToolCallId = toolCall.id;
+    return false;
+  }
+  if (
+    message.role !== "toolResult" ||
+    message.toolName !== "yield" ||
+    message.toolCallId !== state.pendingYieldToolCallId
+  ) {
+    return false;
+  }
+  state.pendingYieldToolCallId = null;
+  return isSuccessfulYieldResult(message);
+}
+
 function hasSuccessfulTerminalYield(messages: OmpAgentMessage[] | undefined): boolean {
   if (!messages) return false;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -230,15 +258,20 @@ function hasSuccessfulTerminalYield(messages: OmpAgentMessage[] | undefined): bo
         candidate.toolCallId === toolCall.id &&
         candidate.toolName === "yield",
     );
-    if (!result || result.role !== "toolResult" || result.isError) return false;
-    const details = result.details;
-    if (!details || typeof details !== "object" || Array.isArray(details)) return false;
-    const record = details as Record<string, unknown>;
-    if (record.status !== "success") return false;
-    if (record.type === undefined || typeof record.type === "string") return true;
-    return false;
+    return result?.role === "toolResult" && isSuccessfulYieldResult(result);
   }
   return false;
+}
+
+function isSuccessfulYieldResult(
+  result: Extract<OmpAgentMessage, { role: "toolResult" }>,
+): boolean {
+  if (result.isError) return false;
+  const details = result.details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return false;
+  const record = details as Record<string, unknown>;
+  if (record.status !== "success") return false;
+  return record.type === undefined || typeof record.type === "string";
 }
 
 function mapLifecycleStatus(

@@ -1330,7 +1330,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
-      this.terminalizeActiveWork();
+      this.terminalizeActiveWork({ terminalizeSubagents: false });
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -1388,14 +1388,16 @@ export class OmpAgentSession implements AgentSession {
     this.subagentCardTracker.clear();
   }
 
-  private terminalizeActiveWork(): void {
+  private terminalizeActiveWork(options: { terminalizeSubagents: boolean }): void {
     for (const [toolCallId, toolCall] of this.activeToolCalls) {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
     }
     this.activeToolCalls.clear();
     this.activeToolCallTurns.clear();
-    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
-      this.emit(event);
+    if (options.terminalizeSubagents) {
+      for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
+        this.emit(event);
+      }
     }
     this.clearOmpTurnState();
   }
@@ -2000,7 +2002,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.usagePoller.stopTurn();
-    this.terminalizeActiveWork();
+    this.terminalizeActiveWork({ terminalizeSubagents: true });
     this.subagentIndex.clear(this.runtimeSession);
     if (!this.activeTurnId) {
       return;
@@ -2669,7 +2671,7 @@ export class OmpAgentSession implements AgentSession {
     );
     // A stall leaves OMP's state unknown, so anything still marked running has no
     // turn left to finish it.
-    this.terminalizeActiveWork();
+    this.terminalizeActiveWork({ terminalizeSubagents: true });
     this.resetActiveTurn();
     this.usagePoller.stopTurn();
     this.emit({
