@@ -138,8 +138,11 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(importMerge, /CONFLICTING/);
   assert.match(importMerge, /kind == 'sync'/);
   assert.match(importMerge, /kind == 'clean-sync'/);
-  assert.match(importMerge, /baseRepository/);
-  assert.match(importMerge, /baseRefName !== "internal\/main"/);
+  assert.match(importMerge, /gh api "repos\/\$REPOSITORY\/pulls\/\$PULL_REQUEST"/);
+  assert.match(importMerge, /pullRequest\.base\?\.repo\?\.full_name/);
+  assert.match(importMerge, /pullRequest\.head\?\.repo\?\.full_name/);
+  assert.match(importMerge, /pullRequest\.base\?\.ref !== "internal\/main"/);
+  assert.doesNotMatch(importMerge, /baseRepository/);
 
   assert.match(relayDeploy, /if: \$\{\{ github\.repository == 'ZGEnergy\/paseo' \}\}/);
   assert.match(relayDeploy, /npx wrangler deploy/);
