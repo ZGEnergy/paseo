@@ -1875,6 +1875,7 @@ export class OmpAgentSession implements AgentSession {
       for (const mapped of this.subagentIndex.handleEvent(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
+      this.settleDeferredTaskCalls();
       return true;
     }
     if (event.type === "todo_reminder") {

@@ -41,29 +41,42 @@ export class OmpSubagentIndex {
       state.resolvedModel = payload.progress.resolvedModel;
     }
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
-    state.status = mapProgressStatus(payload.progress.status);
+    const nextStatus = mapProgressStatus(payload.progress.status);
+    if (state.status === "running" || nextStatus !== "running") {
+      state.status = nextStatus;
+    }
     return [this.upsert(id, state.status, state)];
   }
 
   handleEvent(parent: object, payload: OmpSubagentEventPayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, "OMP subagent");
-    const messages = messagesFromSessionEvent(payload.event);
-    return state.mapper.mapMessages(messages).flatMap((mapped) =>
-      mapped.type === "timeline"
-        ? [
-            {
-              type: "provider_subagent" as const,
-              provider: "omp",
-              event: {
-                type: "timeline" as const,
-                id: payload.id,
-                item: mapped.item,
-                ...(mapped.timestamp ? { timestamp: mapped.timestamp } : {}),
+    const events: AgentStreamEvent[] = state.mapper
+      .mapMessages(messagesFromSessionEvent(payload.event))
+      .flatMap((mapped) =>
+        mapped.type === "timeline"
+          ? [
+              {
+                type: "provider_subagent" as const,
+                provider: "omp" as const,
+                event: {
+                  type: "timeline" as const,
+                  id: payload.id,
+                  item: mapped.item,
+                  ...(mapped.timestamp ? { timestamp: mapped.timestamp } : {}),
+                },
               },
-            },
-          ]
-        : [],
-    );
+            ]
+          : [],
+      );
+    if (
+      payload.event.type === "agent_end" &&
+      state.status === "running" &&
+      hasSuccessfulTerminalYield(payload.event.messages)
+    ) {
+      state.status = "completed";
+      events.push(this.upsert(payload.id, state.status, state));
+    }
+    return events;
   }
 
   hasRunning(parent: object): boolean {
@@ -201,6 +214,31 @@ export class OmpSubagentIndex {
 function messagesFromSessionEvent(event: OmpAgentSessionEvent): OmpAgentMessage[] {
   if (event.type === "message_end") return [event.message];
   return [];
+}
+
+function hasSuccessfulTerminalYield(messages: OmpAgentMessage[] | undefined): boolean {
+  if (!messages) return false;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    if (message.errorMessage) return false;
+    const toolCall = message.content.findLast((content) => content.type === "toolCall");
+    if (!toolCall || toolCall.name !== "yield") return false;
+    const result = messages.find(
+      (candidate) =>
+        candidate.role === "toolResult" &&
+        candidate.toolCallId === toolCall.id &&
+        candidate.toolName === "yield",
+    );
+    if (!result || result.role !== "toolResult" || result.isError) return false;
+    const details = result.details;
+    if (!details || typeof details !== "object" || Array.isArray(details)) return false;
+    const record = details as Record<string, unknown>;
+    if (record.status !== "success") return false;
+    if (record.type === undefined || typeof record.type === "string") return true;
+    return false;
+  }
+  return false;
 }
 
 function mapLifecycleStatus(

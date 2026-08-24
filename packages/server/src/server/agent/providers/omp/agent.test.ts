@@ -1016,6 +1016,92 @@ describe("OMP agent client and session", () => {
     expect(omp.runningToolCallIds()).toEqual([]);
   });
 
+  test("settles a linked task when its child ends with a successful terminal yield", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("fan out");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: { description: "spawn worker" },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-1",
+      toolName: "task",
+      isError: false,
+      result: { text: "Spawned 1 background agent" },
+    });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "Worker",
+        agent: "Worker",
+        status: "started",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("running");
+
+    runtime.emit({
+      type: "subagent_event",
+      payload: {
+        id: "Worker",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-0", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-0",
+              toolName: "yield",
+              content: [],
+            },
+          ],
+        },
+      },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("running");
+
+    runtime.emit({
+      type: "subagent_event",
+      payload: {
+        id: "Worker",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-1", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-1",
+              toolName: "yield",
+              content: [],
+              details: { status: "success", data: "done" },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(lastToolCallStatus(omp, "task-1")).toBe("completed");
+    expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
   test("force-settles a task that never produced a child when the turn completes", async () => {
     const omp = new OmpHarness();
     await omp.start();

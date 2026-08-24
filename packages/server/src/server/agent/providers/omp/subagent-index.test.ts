@@ -102,6 +102,226 @@ describe("OMP provider subagent mapper", () => {
     ]);
   });
 
+  test("marks a child complete only when agent_end contains a successful terminal yield", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: { type: "agent_end" },
+      }),
+    ).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-1", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-1",
+              toolName: "yield",
+              content: [{ type: "text", text: "Result submitted" }],
+              isError: false,
+              details: { status: "success", data: "done" },
+            },
+          ],
+        },
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "child-1",
+          status: "completed",
+        }),
+      }),
+    );
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "worker",
+        progress: { id: "child-1", status: "running" },
+      })[0],
+    ).toMatchObject({ event: { id: "child-1", status: "completed" } });
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "worker",
+        progress: { id: "child-1", status: "failed" },
+      })[0],
+    ).toMatchObject({ event: { id: "child-1", status: "failed" } });
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "worker",
+        progress: { id: "child-1", status: "running" },
+      })[0],
+    ).toMatchObject({ event: { id: "child-1", status: "failed" } });
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "worker",
+        progress: { id: "child-1", status: "aborted" },
+      })[0],
+    ).toMatchObject({ event: { id: "child-1", status: "canceled" } });
+    expect(
+      index.handleProgress(parent, {
+        index: 0,
+        agent: "worker",
+        progress: { id: "child-1", status: "completed" },
+      })[0],
+    ).toMatchObject({ event: { id: "child-1", status: "completed" } });
+    expect(index.hasRunning(parent)).toBe(false);
+  });
+
+  test("does not complete ambiguous or aborted terminal yields", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      index: 0,
+    });
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-0", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-0",
+              toolName: "yield",
+              content: [],
+            },
+          ],
+        },
+      }),
+    ).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-bad", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-bad",
+              toolName: "yield",
+              content: [],
+              details: { status: "success", type: [] },
+            },
+          ],
+        },
+      }),
+    ).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "yield-1",
+                  name: "yield",
+                  arguments: { status: "aborted" },
+                },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-1",
+              toolName: "yield",
+              content: [],
+              details: { status: "aborted", error: "blocked" },
+            },
+          ],
+        },
+      }),
+    ).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+  });
+
+  test("does not reuse an earlier yield when the final assistant message errors", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      index: 0,
+    });
+
+    expect(
+      index.handleEvent(parent, {
+        id: "child-1",
+        event: {
+          type: "agent_end",
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "yield-1", name: "yield", arguments: { data: "done" } },
+              ],
+            },
+            {
+              role: "toolResult",
+              toolCallId: "yield-1",
+              toolName: "yield",
+              content: [],
+              details: { status: "success", data: "done" },
+            },
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "Later turn failed" }],
+              errorMessage: "provider failure",
+            },
+          ],
+        },
+      }),
+    ).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+  });
+
   test("maps aborted lifecycle status to canceled", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
