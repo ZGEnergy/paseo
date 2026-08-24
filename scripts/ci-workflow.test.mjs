@@ -127,7 +127,11 @@ test("fork governance workflows retain their enforcement boundaries", () => {
   assert.match(upstreamSync, /sync\/downstream/);
   assert.match(upstreamSync, /Downstream sync: true/);
   assert.match(upstreamSync, /--merge-lockfile/);
-  assert.match(upstreamSync, /trusted-scripts/);
+  assert.match(upstreamSync, /TRUSTED_SCRIPTS="\$GITHUB_WORKSPACE\/\.trusted-sync-scripts"/);
+  assert.doesNotMatch(upstreamSync, /\$RUNNER_TEMP\/trusted-scripts/);
+  assert.match(upstreamSync, /blocked_body=/);
+  assert.match(upstreamSync, /-f body="\$blocked_body"/);
+  assert.doesNotMatch(upstreamSync, /gh pr comment/);
   assert.match(upstreamSync, /env -u GH_TOKEN -u GITHUB_TOKEN/);
   assert.match(upstreamSync, /update-nix\.sh/);
   assert.doesNotMatch(upstreamSync, /pulls\/\$number\/merge/);

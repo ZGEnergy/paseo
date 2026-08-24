@@ -153,7 +153,7 @@ jobs:
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
           if [ "$CLASS" = "blocked" ]; then
-            gh pr comment "$number" --body "$(cat <<EOF
+            blocked_body="$(cat <<EOF
           Sync cannot auto-resolve. Unmerged paths:
 
           \`\`\`
@@ -163,6 +163,7 @@ jobs:
           Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
           EOF
           )"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f body="$blocked_body" >/dev/null
           fi
 
       - uses: actions/setup-node@v4
@@ -185,11 +186,13 @@ jobs:
           set -euo pipefail
           echo "resolved=false" >> "$GITHUB_OUTPUT"
           git fetch origin main internal/main
-          mkdir -p "$RUNNER_TEMP/trusted-scripts"
-          git show origin/internal/main:scripts/check-upstream-provenance.mjs >"$RUNNER_TEMP/trusted-scripts/check-upstream-provenance.mjs"
-          git show origin/internal/main:scripts/update-nix.sh >"$RUNNER_TEMP/trusted-scripts/update-nix.sh"
-          git show origin/internal/main:scripts/fix-lockfile.mjs >"$RUNNER_TEMP/trusted-scripts/fix-lockfile.mjs"
-          chmod +x "$RUNNER_TEMP/trusted-scripts/update-nix.sh"
+          TRUSTED_SCRIPTS="$GITHUB_WORKSPACE/.trusted-sync-scripts"
+          rm -rf "$TRUSTED_SCRIPTS"
+          mkdir -p "$TRUSTED_SCRIPTS"
+          git show origin/internal/main:scripts/check-upstream-provenance.mjs >"$TRUSTED_SCRIPTS/check-upstream-provenance.mjs"
+          git show origin/internal/main:scripts/update-nix.sh >"$TRUSTED_SCRIPTS/update-nix.sh"
+          git show origin/internal/main:scripts/fix-lockfile.mjs >"$TRUSTED_SCRIPTS/fix-lockfile.mjs"
+          chmod +x "$TRUSTED_SCRIPTS/update-nix.sh"
           git checkout -B sync/downstream origin/internal/main
           git config user.name "zge-paseo-upstream-sync[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -212,7 +215,7 @@ jobs:
               git show :1:package-lock.json >"$RUNNER_TEMP/lock-base.json"
               git show :2:package-lock.json >"$RUNNER_TEMP/lock-ours.json"
               git show :3:package-lock.json >"$RUNNER_TEMP/lock-theirs.json"
-              if ! env -u GH_TOKEN -u GITHUB_TOKEN node "$RUNNER_TEMP/trusted-scripts/check-upstream-provenance.mjs" \
+              if ! env -u GH_TOKEN -u GITHUB_TOKEN node "$TRUSTED_SCRIPTS/check-upstream-provenance.mjs" \
                 --merge-lockfile \
                 --base "$RUNNER_TEMP/lock-base.json" \
                 --ours "$RUNNER_TEMP/lock-ours.json" \
@@ -226,7 +229,7 @@ jobs:
             fi
           fi
 
-          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$RUNNER_TEMP/trusted-scripts/update-nix.sh"; then
+          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$TRUSTED_SCRIPTS/update-nix.sh"; then
             echo "update-nix.sh failed."
             if [ -f .git/MERGE_HEAD ]; then
               git merge --abort
@@ -246,7 +249,7 @@ jobs:
           elif ! git diff --cached --quiet; then
             git commit --amend --no-edit
           fi
-          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$RUNNER_TEMP/trusted-scripts/update-nix.sh" --check; then
+          if ! env -u GH_TOKEN -u GITHUB_TOKEN "$TRUSTED_SCRIPTS/update-nix.sh" --check; then
             echo "update-nix.sh --check failed after commit."
             exit 0
           fi
@@ -282,7 +285,7 @@ jobs:
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
-          gh pr comment "$number" --body "$(cat <<EOF
+          blocked_body="$(cat <<EOF
           Derived-file auto-resolve failed. Unmerged paths from merge-tree:
 
           \`\`\`
@@ -292,3 +295,4 @@ jobs:
           Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
           EOF
           )"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f body="$blocked_body" >/dev/null
