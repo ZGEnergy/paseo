@@ -185,9 +185,15 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
 
-## Upstream port rule
+## Upstream direction rules
 
-For an upstream-port pull request, fetch both `origin/main` and `origin/internal/main`, create the candidate directly from fetched upstream `main`, and run the local preflight before opening the pull request:
+### Port from upstream
+
+To import an upstream pull request into the fork, fetch `origin/internal/main` and the exact upstream pull-request head. Create the candidate from `origin/internal/main`, cherry-pick only the pinned upstream commit or commits, and target `internal/main`. Include the direct-import metadata required by [docs/fork-governance.md](docs/fork-governance.md). Do not use the upstream-port preflight for an import.
+
+### Port to upstream
+
+To send fork work to upstream, fetch both `origin/main` and `origin/internal/main`, create the candidate directly from fetched upstream `main`, and run the local preflight before opening the pull request:
 
 ```sh
 node scripts/check-upstream-port.mjs --candidate <candidate-ref> --upstream-ref origin/main --integration-ref origin/internal/main --allow-path <path>
