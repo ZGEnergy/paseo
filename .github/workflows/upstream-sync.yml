@@ -144,11 +144,26 @@ jobs:
           CONFLICTS: ${{ steps.classify.outputs.conflicts }}
         run: |
           set -euo pipefail
+          # PATCH can 422 right after a push moves the pull request head while
+          # GitHub reprocesses the synchronize event; retry with backoff.
+          patch_pull_request() {
+            local number="$1"
+            shift
+            local attempt=1
+            until gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" "$@" >/dev/null; do
+              if [ "$attempt" -ge 5 ]; then
+                return 1
+              fi
+              echo "PATCH attempt $attempt failed; retrying in $((attempt * 5))s."
+              sleep "$((attempt * 5))"
+              attempt=$((attempt + 1))
+            done
+          }
           title="Sync upstream main into internal/main"
           body="Automated upstream sync from main into internal/main."
           number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
           if [ -n "$number" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
+            patch_pull_request "$number" -f title="$title" -f body="$body"
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
@@ -163,7 +178,7 @@ jobs:
           Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
           EOF
           )"
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f body="$blocked_body" >/dev/null
+            patch_pull_request "$number" -f body="$blocked_body"
           fi
 
       - uses: actions/setup-node@v4
@@ -184,6 +199,21 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          # PATCH can 422 right after the sync/downstream force-push moves the
+          # pull request head (synchronize reprocessing); retry with backoff.
+          patch_pull_request() {
+            local number="$1"
+            shift
+            local attempt=1
+            until gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" "$@" >/dev/null; do
+              if [ "$attempt" -ge 5 ]; then
+                return 1
+              fi
+              echo "PATCH attempt $attempt failed; retrying in $((attempt * 5))s."
+              sleep "$((attempt * 5))"
+              attempt=$((attempt + 1))
+            done
+          }
           echo "resolved=false" >> "$GITHUB_OUTPUT"
           git fetch origin main internal/main
           TRUSTED_SCRIPTS="$GITHUB_WORKSPACE/.trusted-sync-scripts"
@@ -259,7 +289,7 @@ jobs:
           body="Downstream sync: true"
           number="$(gh pr list --base internal/main --head sync/downstream --state open --json number --jq '.[0].number')"
           if [ -n "$number" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
+            patch_pull_request "$number" -f title="$title" -f body="$body"
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=sync/downstream -f base=internal/main -f body="$body" --jq '.number')"
           fi
@@ -277,11 +307,24 @@ jobs:
           CONFLICTS: ${{ steps.classify.outputs.conflicts }}
         run: |
           set -euo pipefail
+          patch_pull_request() {
+            local number="$1"
+            shift
+            local attempt=1
+            until gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" "$@" >/dev/null; do
+              if [ "$attempt" -ge 5 ]; then
+                return 1
+              fi
+              echo "PATCH attempt $attempt failed; retrying in $((attempt * 5))s."
+              sleep "$((attempt * 5))"
+              attempt=$((attempt + 1))
+            done
+          }
           title="Sync upstream main into internal/main"
           body="Automated upstream sync from main into internal/main."
           number="$(gh pr list --base internal/main --head main --state open --json number --jq '.[0].number')"
           if [ -n "$number" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f title="$title" -f body="$body" >/dev/null
+            patch_pull_request "$number" -f title="$title" -f body="$body"
           else
             number="$(gh api --method POST "repos/$GITHUB_REPOSITORY/pulls" -f title="$title" -f head=main -f base=internal/main -f body="$body" --jq '.number')"
           fi
@@ -295,4 +338,4 @@ jobs:
           Do not resolve this pull request in the GitHub web editor. Branch from \`internal/main\`, merge \`main\`, and open a \`Downstream sync: true\` pull request.
           EOF
           )"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$number" -f body="$blocked_body" >/dev/null
+          patch_pull_request "$number" -f body="$blocked_body"
