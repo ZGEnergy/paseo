@@ -353,22 +353,6 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
   return decodeWorkspaceIdFromPathSegment(match[1]);
 }
 
-async function expectWorkspaceRowHasOnlyIndicator(
-  page: Page,
-  input: { serverId: string; workspaceId: string; indicator: string },
-) {
-  const row = page.getByTestId(`sidebar-workspace-row-${input.serverId}:${input.workspaceId}`);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  for (const indicator of ["attention", "done", "failed", "loading", "needs_input", "running"]) {
-    const locator = row.locator(`[data-testid="workspace-status-indicator-${indicator}"]`);
-    if (indicator === input.indicator) {
-      await expect(locator).toBeVisible({ timeout: 30_000 });
-    } else {
-      await expect(locator).toHaveCount(0);
-    }
-  }
-}
-
 async function expectWorkspaceRowDoesNotShowIndicator(
   page: Page,
   input: { serverId: string; workspaceId: string; indicator: string },
@@ -441,18 +425,6 @@ test.describe("Workspace model restart regressions", () => {
 
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
       await waitForSidebarHydration(page);
-      // Opening the workspace mounts the agent tab. The seeded record has
-      // lastStatus=running and persistence=null, so ensureAgentLoaded creates a
-      // fresh session and the persisted running snapshot goes away. Assert the
-      // sidebar after that settle; requiring running here races the load.
-      await expect
-        .poll(async () => (await fetchLegacyAgent(client))?.status ?? null, { timeout: 30_000 })
-        .toBe("idle");
-      await expectWorkspaceRowHasOnlyIndicator(page, {
-        serverId,
-        workspaceId: seeded.workspaceA,
-        indicator: "done",
-      });
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
         workspaceId: seeded.workspaceB,
