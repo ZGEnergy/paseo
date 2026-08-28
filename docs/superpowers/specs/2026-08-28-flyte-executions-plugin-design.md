@@ -34,7 +34,7 @@ Real-data facts the design depends on (pulled 2026-08-28):
 
 ## Where it lives
 
-Sidebar item **"Flyte runs"** opening a full screen (`plugin.addSidebarItem` + `plugin.addSurface("main", …)`), plus a Command Center item that opens the same screen (`plugin.addCommandCenterItem`). Chosen over a workspace panel because executions are project-scoped, not workspace-scoped — the same data would repeat identically in every sibling workspace tab, and a panel is a tap deeper on mobile. Lucide icon proposal: `Plane`.
+Sidebar item **"Flyte runs"** opening a full screen (`plugin.addSidebarItem` + `plugin.addSurface("main", …)`), plus a Command Center item that opens the same screen (`plugin.addCommandCenterItem`). Chosen over a workspace panel because executions are project-scoped, not workspace-scoped — the same data would repeat identically in every sibling workspace tab, and a panel is a tap deeper on mobile. Lucide icon: `Plane`.
 
 Desktop: settings-shell list+detail — the canonical 320px list column (`SETTINGS_DESKTOP_SIDEBAR_WIDTH`, `packages/app/src/constants/layout.ts`) on `surfaceSidebar`, detail pane right. Phone: the list and detail are both in-surface views — plugins cannot push routes or retitle the host header (`PluginSurfaceProps` carries only theme/host/layout, `packages/plugin/src/contracts.ts:23-35`; the host always renders its own `ScreenHeader`, `packages/app/src/plugins/surface-screen.tsx`). Tapping a row swaps the body to the detail view with a body-level back control ("‹ Flyte runs") under the persistent host header; desktop keeps both panes visible. One `layout.compact` branch, same components.
 
@@ -167,7 +167,7 @@ Information hierarchy:
 - Date window and full labels live behind the tap in the detail — they don't fit a phone row and the name prefix usually encodes them.
 - Summary chips under the screen title: `N running · N succeeded today · N aborted` (computed from loaded pages; "today" = device-local midnight). During the busy moment this collapses to `9 running`.
 - Day sections (Today / Yesterday / date) in device-local time.
-- Detail: emphasized elapsed or final duration, node progress bar (running only), overview card (date window, size, workflow), labels card, nodes card (id, task name, phase, duration), "Open in console" outline button + URL.
+- Detail: emphasized elapsed or final duration, node progress bar (running only), overview card (date window, size, workflow), labels card, nodes card — two-line node rows (id, phase, duration; task name on a muted second line as its final dot-segment), "Open in console" outline button + URL.
 
 Phase mapping (single client function; tokens from `theme.colors`):
 
@@ -214,10 +214,10 @@ Plugins are disabled on the production daemon (`~/.paseo/config.json` has no `pl
 - In-app log viewing (log URIs link out)
 - Refreshing data while the screen is closed (queries stop with the surface)
 
-## Open decisions
+## Resolved decisions (2026-08-28)
 
-1. Plugin home and install: own repo (git source via `paseo plugin add`) vs directory under an existing checkout. Runtime id: `flyte-runs`?
-2. Sidebar icon: `Plane` proposed (Lucide).
-3. Detail node rows: contract carries `taskName` and `logs`; confirm they render on phone (mockup shows node id + phase + duration only — task name may crowd the row; it can go on a second line).
-4. Page size 25 vs 50 for the first load.
-5. Follow-up (outside this plugin): `paseo-agent` label in the submit CLI to enable attribution later.
+1. **Plugin home and runtime id**: directory source at `/home/joe/code/zge-workspace/dev-tools/paseo/flyte-runs-plugin` (new path, following the dev-tools repo's existing pattern), installed via `paseo plugin install` under runtime id `flyte-runs`. Directory source keeps the edit-reload dev loop; the repo is shareable through git like any other checkout.
+2. **Sidebar icon**: Lucide `Plane` — confirmed.
+3. **Detail node rows**: two lines — node id, phase, duration on the first; the task name on a muted second line, rendered as the final dot-segment of the namespaced task name (e.g. `power_flow` from `zge_market_framework.sacrilege.flyte_generator.sized.scenario.power_flow` — real values for main-6fff59b-df70: ingestion, topology, scenarios, disaggregation, dispatch, power_flow). The full name stays in the console.
+4. **Page size**: 25 (first page and each load-more).
+5. **`paseo-agent` submit-path label**: dropped. The out-of-scope note above remains as documentation should it be revisited.
