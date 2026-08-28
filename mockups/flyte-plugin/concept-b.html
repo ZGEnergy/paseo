@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Concept B — Run cards</title>
+<style>
+  /* React Native View/Text expressible only: flexbox, border, borderRadius, backgroundColor. No grid, no SVG, no pseudo-elements. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #d8d8dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 40px 0; }
+
+  .caption { max-width: 1240px; width: 100%; padding: 0 20px; display: flex; flex-direction: column; gap: 4px; }
+  .caption h2 { font-size: 16px; font-weight: 600; color: #1a1a1e; }
+  .caption p { font-size: 13px; color: #55555c; line-height: 1.5; }
+
+  .frame { border: 1px solid #b9b9c0; border-radius: 12px; overflow: hidden; }
+
+  .light { --surface0:#ffffff; --surface1:#fafafa; --surface2:#f4f4f5; --surface3:#e4e4e7; --surfaceSidebar:#f4f4f5;
+           --fg:#1a1a1e; --fgMuted:#71717a; --border:#e4e4e7; --accent:#20744A;
+           --dotSuccess:#299f51; --dotDanger:#f12e2f; --dotWarning:#b37824; --dotRunning:#268ae0;
+           --success:#3e704a; --danger:#9d433b; --warning:#7b5d39; }
+  .dark { --surface0:#181B1A; --surface1:#1E2120; --surface2:#272A29; --surface3:#434645; --surfaceSidebar:#141716;
+          --fg:#fafafa; --fgMuted:#A1A5A4; --border:#252B2A; --accent:#20744A;
+          --dotSuccess:#35c264; --dotDanger:#f7796d; --dotWarning:#db932e; --dotRunning:#5caaf6;
+          --success:#6cb17b; --danger:#d8847b; --warning:#c09664; }
+
+  .app { display: flex; flex-direction: row; width: 1240px; height: 860px; background: var(--surface0); }
+  .sidebar { width: 240px; background: var(--surfaceSidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 10px; gap: 2px; }
+  .sb-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 8px 10px 6px; }
+  .sb-item { display: flex; flex-direction: row; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; }
+  .sb-item span { font-size: 13px; color: var(--fg); }
+  .sb-item.muted span { color: var(--fgMuted); }
+  .sb-item.active { background: var(--surface3); }
+  .sb-dot { width: 14px; height: 14px; border-radius: 99px; display: flex; align-items: center; justify-content: center; }
+  .sb-dot span { font-size: 9px; color: #fff; }
+  .sb-flyte { background: var(--accent); }
+
+  .screen { flex: 1; display: flex; flex-direction: column; background: var(--surface0); }
+  .screen-header { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 28px 28px 14px; }
+  .screen-title { font-size: 21px; font-weight: 300; color: var(--fg); }
+  .screen-sub { font-size: 12px; color: var(--fgMuted); }
+  .summary { display: flex; flex-direction: row; gap: 8px; padding: 0 28px 16px; }
+  .sum-chip { display: flex; flex-direction: row; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 99px; padding: 4px 10px; background: var(--surface1); }
+  .sum-chip .d { width: 7px; height: 7px; border-radius: 99px; }
+  .sum-chip span { font-size: 11.5px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+
+  .scrolly { flex: 1; overflow: hidden; display: flex; flex-direction: row; justify-content: center; }
+  .column { width: 720px; display: flex; flex-direction: column; gap: 8px; padding: 0 28px 24px; overflow: hidden; }
+  .day-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 8px 2px 2px; }
+
+  .card { display: flex; flex-direction: row; border: 1px solid var(--border); border-radius: 10px; background: var(--surface1); overflow: hidden; }
+  .rail { width: 3px; border-radius: 99px; margin: 8px 0 8px 8px; }
+  .card-body { flex: 1; display: flex; flex-direction: column; padding: 10px 14px 10px 12px; gap: 3px; }
+  .card-top { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+  .card-name { flex: 1; font-size: 13.5px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .card-meta { font-size: 11.5px; color: var(--fgMuted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill { display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; background: var(--surface3); border: 1px solid var(--border); }
+  .pill span { font-size: 11px; font-weight: 500; }
+  .pill .d { width: 6px; height: 6px; border-radius: 99px; }
+  .dur { font-size: 12px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+
+  .expanded { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; margin-top: 7px; border-top: 1px solid var(--border); }
+  .elapsed-row { display: flex; flex-direction: row; align-items: baseline; gap: 10px; }
+  .elapsed { font-size: 19px; font-weight: 400; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .elapsed-sub { font-size: 11.5px; color: var(--fgMuted); }
+  .progress-block { display: flex; flex-direction: column; gap: 5px; }
+  .progress-label { font-size: 11px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .track { height: 4px; border-radius: 99px; background: var(--surface3); display: flex; flex-direction: row; }
+  .fill { height: 4px; border-radius: 99px; }
+  .nodes { display: flex; flex-direction: column; }
+  .node-row { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 5px 0; }
+  .node-row .d { width: 6px; height: 6px; border-radius: 99px; }
+  .node-id { font-size: 12px; color: var(--fg); width: 30px; font-variant-numeric: tabular-nums; }
+  .node-phase { font-size: 11px; color: var(--fgMuted); flex: 1; }
+  .node-dur { font-size: 12px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .console-btn { display: flex; flex-direction: row; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; align-self: flex-start; background: var(--surface0); }
+  .console-btn span { font-size: 12.5px; color: var(--fg); }
+
+  .phone-frame { border: 1px solid #b9b9c0; border-radius: 28px; padding: 10px; background: #c9c9cf; }
+  .phone { width: 390px; height: 860px; background: var(--surface0); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+  .ph-header { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 56px 18px 12px; border-bottom: 1px solid var(--border); }
+  .ph-title { font-size: 17px; font-weight: 400; color: var(--fg); }
+  .ph-list { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 20px; overflow: hidden; }
+  .ph-list .card { background: var(--surface1); }
+
+  .state-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; }
+  .spinner { width: 26px; height: 26px; border-radius: 99px; border: 2.5px solid var(--surface3); border-top-color: var(--fgMuted); }
+  .state-text { font-size: 13px; color: var(--fgMuted); }
+  .alert { display: flex; flex-direction: column; gap: 8px; margin: 16px; border: 1px solid var(--danger); border-radius: 10px; padding: 12px 14px; }
+  .alert .t { font-size: 13px; font-weight: 500; color: var(--danger); }
+  .alert .d { font-size: 12px; color: var(--fgMuted); }
+</style>
+</head>
+<body>
+
+<!-- ================= STEADY / DESKTOP / LIGHT ================= -->
+<div class="caption">
+  <h2>Concept B "Run cards" — desktop, light, steady state</h2>
+  <p>Single centered 720px column (reading surface, not list+detail). Each execution is a card with a 3px status rail and a phase pill. Running cards expand in place: emphasized elapsed, node progress bar (5 of 6 nodes — real node phases), compact node rows, console link. Terminal cards stay collapsed. All data real, pulled 2026-08-28. Tapping a collapsed card expands it; tapping elsewhere collapses. The blue rail and dot pulse in the real app.</p>
+</div>
+<div class="frame"><div class="app light">
+  <div class="sidebar">
+    <div class="sb-label">Workspaces</div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#71717a"><span>E</span></div><span>ercot-power-flow-poc</span></div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#71717a"><span>P</span></div><span>paseo</span></div>
+    <div class="sb-label" style="margin-top:14px">Monitoring</div>
+    <div class="sb-item active"><div class="sb-dot sb-flyte"><span>✈</span></div><span>Flyte runs</span></div>
+  </div>
+  <div class="screen">
+    <div class="screen-header">
+      <div class="screen-title">Flyte runs</div>
+      <div class="screen-sub">ercot-power-flow-poc · experiments</div>
+    </div>
+    <div class="summary">
+      <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded today</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+    </div>
+    <div class="scrolly">
+      <div class="column">
+        <div class="day-label">Today</div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">fix-volcano-memory-units-42373ce-344e</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">15m 12s</div></div>
+            <div class="card-meta">20:14 · standalone · s · coury · pr 1852</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-df70</div>
+              <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div></div>
+            <div class="card-meta">12:32 · scenario · l · tom · 2024-05-01 → 2025-02-28</div>
+            <div class="expanded">
+              <div class="elapsed-row"><div class="elapsed">8h 32m</div><div class="elapsed-sub">elapsed · started 12:32 UTC</div></div>
+              <div class="progress-block">
+                <div class="progress-label">5 of 6 nodes succeeded</div>
+                <div class="track"><div class="fill" style="width:83%;background:var(--dotRunning)"></div></div>
+              </div>
+              <div class="nodes">
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n0</div><div class="node-phase">Succeeded</div><div class="node-dur">32m 39s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n1</div><div class="node-phase">Succeeded</div><div class="node-dur">4h 49m</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n2</div><div class="node-phase">Succeeded</div><div class="node-dur">46m 49s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n3</div><div class="node-phase">Succeeded</div><div class="node-dur">23m 48s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n4</div><div class="node-phase">Succeeded</div><div class="node-dur">51m 02s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotRunning)"></div><div class="node-id">n5</div><div class="node-phase">Dynamic running</div><div class="node-dur">1h 09m</div></div>
+              </div>
+              <div class="console-btn"><span>Open in console</span></div>
+            </div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-8aac</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">7h 55m</div></div>
+            <div class="card-meta">12:33 · scenario · l · tom · 2025-03-01 → 2025-12-31</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotWarning)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-61b0</div>
+              <div class="pill"><span style="color:var(--warning)">Aborted</span></div><div class="dur">2h 40m</div></div>
+            <div class="card-meta">05:42 · scenario · l · tom · 2024-05-01 → 2025-12-31</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">cachewarm-2026-q2-bae0be0-b405</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">4m 23s</div></div>
+            <div class="card-meta">04:36 · dispatch · s · root · 2026-04-01</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">dv-ab-base-6fff59b-6fff59b-bbb2</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">20m 49s</div></div>
+            <div class="card-meta">16:00 · scenario · s · joe · 2025-11-25 → 2025-12-15</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">19m 31s</div></div>
+            <div class="card-meta">16:00 · scenario · s · joe · 2025-11-25 → 2025-12-15</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">cachewarm-2026-q2-bae0be0-12a6</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">1h 13m</div></div>
+            <div class="card-meta">03:22 · standalone · s · root · 2026-04-01</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">cachewarm-2026-q2-bae0be0-331e</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">19m 16s</div></div>
+            <div class="card-meta">03:01 · scenario · s · root · 2026-04-01</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">pf-battery-ab-treat-7293465-a28d</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">2h 46m</div></div>
+            <div class="card-meta">02:10 · scenario · s · joe · pr 1735 · arm treatment</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">pf-battery-ab-base-bae0be0-ca27</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">2h 57m</div></div>
+            <div class="card-meta">02:10 · scenario · s · joe · pr 1735 · arm baseline</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotWarning)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">leak-2026-06-18-diff-0870b1d-a28b</div>
+              <div class="pill"><span style="color:var(--warning)">Aborted</span></div><div class="dur">6m 10s</div></div>
+            <div class="card-meta">00:56 · leak_diff · tyler · 2026-06-18</div>
+          </div></div>
+        <div class="day-label">Yesterday</div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">mo-portfolio-scenario-dag-654c41a-cc68</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">40m 08s</div></div>
+            <div class="card-meta">22:47 · scenario · s · nate · pr 1841 · 2025-12-20</div>
+          </div></div>
+        <div class="load-more" style="display:flex;flex-direction:row;justify-content:center;padding:8px"><span style="font-size:13px;color:var(--fgMuted)">Load more</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ================= STEADY / PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Concept B — phone, light, steady state</h2>
+  <p>Same column at phone width. Collapsed cards are one name line plus one meta line — the summary chips carry the day's shape at a glance. Running card shown expanded: progress bar and node rows are real values for main-6fff59b-df70.</p>
+</div>
+<div class="phone-frame"><div class="phone light">
+  <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+  <div class="summary" style="padding:12px 16px 6px">
+    <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+  </div>
+  <div class="ph-list">
+    <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">fix-volcano-memory-units-42373ce-344e</div>
+          <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">15m 12s</div></div>
+        <div class="card-meta">20:14 · standalone · s · coury</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">main-6fff59b-df70</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div></div>
+        <div class="card-meta">12:32 · scenario · l · tom</div>
+        <div class="expanded">
+          <div class="elapsed-row"><div class="elapsed">8h 32m</div><div class="elapsed-sub">elapsed</div></div>
+          <div class="progress-block">
+            <div class="progress-label">5 of 6 nodes succeeded</div>
+            <div class="track"><div class="fill" style="width:83%;background:var(--dotRunning)"></div></div>
+          </div>
+          <div class="nodes">
+            <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n0</div><div class="node-phase">Succeeded</div><div class="node-dur">32m 39s</div></div>
+            <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n1</div><div class="node-phase">Succeeded</div><div class="node-dur">4h 49m</div></div>
+            <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n2</div><div class="node-phase">Succeeded</div><div class="node-dur">46m 49s</div></div>
+            <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n3</div><div class="node-phase">Succeeded</div><div class="node-dur">23m 48s</div></div>
+            <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n4</div><div class="node-phase">Succeeded</div><div class="node-dur">51m 02s</div></div>
+            <div class="node-row"><div class="d" style="background:var(--dotRunning)"></div><div class="node-id">n5</div><div class="node-phase">Dynamic running</div><div class="node-dur">1h 09m</div></div>
+          </div>
+          <div class="console-btn"><span>Open in console</span></div>
+        </div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">main-6fff59b-8aac</div>
+          <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">7h 55m</div></div>
+        <div class="card-meta">12:33 · scenario · l · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotWarning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">main-6fff59b-61b0</div>
+          <div class="pill"><span style="color:var(--warning)">Aborted</span></div><div class="dur">2h 40m</div></div>
+        <div class="card-meta">05:42 · scenario · l · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">cachewarm-2026-q2-bae0be0-b405</div>
+          <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">4m 23s</div></div>
+        <div class="card-meta">04:36 · dispatch · s · root</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">dv-ab-base-6fff59b-6fff59b-bbb2</div>
+          <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">20m 49s</div></div>
+        <div class="card-meta">16:00 · scenario · s · joe</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div>
+          <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">19m 31s</div></div>
+        <div class="card-meta">16:00 · scenario · s · joe</div>
+      </div></div>
+  </div>
+</div></div>
+
+<!-- ================= STEADY / DESKTOP / DARK, terminal expansion ================= -->
+<div class="caption">
+  <h2>Concept B — desktop, dark, terminal card expanded</h2>
+  <p>Dark theme. A terminal card (fix-volcano-memory-units-42373ce-344e) expanded: elapsed becomes final duration, progress bar completes green, node rows show the four real node durations (2m 02s / 1m 52s / 1m 46s / 9m 29s). Expansion-in-place means no detail screen — the list stays where it was.</p>
+</div>
+<div class="frame"><div class="app dark">
+  <div class="sidebar">
+    <div class="sb-label">Workspaces</div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#717574"><span>E</span></div><span>ercot-power-flow-poc</span></div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#717574"><span>P</span></div><span>paseo</span></div>
+    <div class="sb-label" style="margin-top:14px">Monitoring</div>
+    <div class="sb-item active"><div class="sb-dot sb-flyte"><span>✈</span></div><span>Flyte runs</span></div>
+  </div>
+  <div class="screen">
+    <div class="screen-header">
+      <div class="screen-title">Flyte runs</div>
+      <div class="screen-sub">ercot-power-flow-poc · experiments</div>
+    </div>
+    <div class="summary">
+      <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded today</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+    </div>
+    <div class="scrolly">
+      <div class="column">
+        <div class="day-label">Today</div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">fix-volcano-memory-units-42373ce-344e</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">15m 12s</div></div>
+            <div class="card-meta">20:14 · standalone · s · coury · pr 1852 · 2026-04-01</div>
+            <div class="expanded">
+              <div class="elapsed-row"><div class="elapsed">15m 12s</div><div class="elapsed-sub">duration · 4 of 4 nodes succeeded</div></div>
+              <div class="progress-block">
+                <div class="track"><div class="fill" style="width:100%;background:var(--dotSuccess)"></div></div>
+              </div>
+              <div class="nodes">
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n0</div><div class="node-phase">Succeeded</div><div class="node-dur">2m 02s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n1</div><div class="node-phase">Succeeded</div><div class="node-dur">1m 52s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n2</div><div class="node-phase">Succeeded</div><div class="node-dur">1m 46s</div></div>
+                <div class="node-row"><div class="d" style="background:var(--dotSuccess)"></div><div class="node-id">n3</div><div class="node-phase">Succeeded</div><div class="node-dur">9m 29s</div></div>
+              </div>
+              <div class="console-btn"><span>Open in console</span></div>
+            </div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-df70</div>
+              <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">8h 32m</div></div>
+            <div class="card-meta">12:32 · scenario · l · tom · 2024-05-01 → 2025-02-28</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-8aac</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">7h 55m</div></div>
+            <div class="card-meta">12:33 · scenario · l · tom · 2025-03-01 → 2025-12-31</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotWarning)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">main-6fff59b-61b0</div>
+              <div class="pill"><span style="color:var(--warning)">Aborted</span></div><div class="dur">2h 40m</div></div>
+            <div class="card-meta">05:42 · scenario · l · tom · 2024-05-01 → 2025-12-31</div>
+          </div></div>
+        <div class="card"><div class="rail" style="background:var(--dotSuccess)"></div>
+          <div class="card-body">
+            <div class="card-top"><div class="card-name">dv-ab-base-6fff59b-6fff59b-bbb2</div>
+              <div class="pill"><span style="color:var(--success)">Succeeded</span></div><div class="dur">20m 49s</div></div>
+            <div class="card-meta">16:00 · scenario · s · joe · 2025-11-25 → 2025-12-15</div>
+          </div></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ================= BUSY / PHONE / DARK ================= -->
+<div class="caption">
+  <h2>Concept B — busy state, phone, dark</h2>
+  <p>The real 2026-08-26 20:36 UTC moment: 9 concurrent runs, all collapsed, one summary chip. This is concept B's answer to stress — cards compress to two lines each and the count lives in the header, not the rows.</p>
+</div>
+<div class="phone-frame"><div class="phone dark">
+  <div class="ph-header"><div class="ph-title">Flyte runs</div><div class="screen-sub" style="margin-left:auto">Aug 26</div></div>
+  <div class="summary" style="padding:12px 16px 6px">
+    <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>9 running</span></div>
+  </div>
+  <div class="ph-list">
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">verify-pr1784-full-post-1eaf34f-845e</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">0m</div></div>
+        <div class="card-meta">20:36 · scenario · s · joe</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">feature-contingency-island-lodf-8558f7f-27a2</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">3m 47s</div></div>
+        <div class="card-meta">20:32 · standalone · m · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">verify-battery-partial-hours-00d6e8d-7276</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">14m 05s</div></div>
+        <div class="card-meta">20:22 · scenario · s · joe</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">verify-battery-partial-hours-00d6e8d-fd5e</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">14m 25s</div></div>
+        <div class="card-meta">20:21 · scenario · s · joe</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">main-ced09dd-74e6</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">50m 55s</div></div>
+        <div class="card-meta">19:45 · scenario · s · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">scenario-sample-without-replacement-fa65aeb-c7de</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">52m 01s</div></div>
+        <div class="card-meta">19:44 · scenario · s · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">jul25-oracle-renew-ede5c16-2716</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">1h 43m</div></div>
+        <div class="card-meta">18:53 · scenario · s · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">jul25-oracle-thermal-cd35d66-b381</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">2h 09m</div></div>
+        <div class="card-meta">18:27 · scenario · s · tom</div>
+      </div></div>
+    <div class="card"><div class="rail" style="background:var(--dotRunning)"></div>
+      <div class="card-body">
+        <div class="card-top"><div class="card-name">main-72629b8-fb00</div>
+          <div class="pill"><div class="d" style="background:var(--dotRunning)"></div><span style="color:var(--dotRunning)">Running</span></div><div class="dur">2h 40m</div></div>
+        <div class="card-meta">17:56 · standalone · m · tom</div>
+      </div></div>
+  </div>
+</div></div>
+
+<!-- ================= LOADING + ERROR / PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Concept B — loading and error states, phone, light</h2>
+  <p>Left: first load — summary chips render as empty shells so the layout never shifts when data lands. Right: Flyte unreachable — one bordered alert with Retry. The list below stays empty; with the recent-N concept there is no standing empty state once a page has loaded.</p>
+</div>
+<div style="display:flex;flex-direction:row;gap:24px;align-items:flex-start">
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="summary" style="padding:12px 16px 6px">
+      <div class="sum-chip" style="opacity:0.5"><div class="d" style="background:var(--surface3)"></div><span>— running</span></div>
+      <div class="sum-chip" style="opacity:0.5"><div class="d" style="background:var(--surface3)"></div><span>— succeeded</span></div>
+    </div>
+    <div class="state-box">
+      <div class="spinner"></div>
+      <div class="state-text">Loading…</div>
+    </div>
+  </div></div>
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="alert">
+      <div class="t">Unable to reach Flyte</div>
+      <div class="d">flyte.cluster.zge did not respond. The daemon will keep retrying while this screen is open.</div>
+      <div class="console-btn" style="align-self:flex-start"><span>Retry</span></div>
+    </div>
+    <div class="state-box">
+      <div class="state-text">No executions loaded</div>
+    </div>
+  </div></div>
+</div>
+
+</body>
+</html>

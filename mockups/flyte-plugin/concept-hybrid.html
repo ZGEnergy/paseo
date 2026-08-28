@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Hybrid — Ledger + chips + row progress</title>
+<style>
+  /* React Native View/Text expressible only: flexbox, border, borderRadius, backgroundColor. No grid, no SVG, no pseudo-elements. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #d8d8dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 40px 0; }
+
+  .caption { max-width: 1240px; width: 100%; padding: 0 20px; display: flex; flex-direction: column; gap: 4px; }
+  .caption h2 { font-size: 16px; font-weight: 600; color: #1a1a1e; }
+  .caption p { font-size: 13px; color: #55555c; line-height: 1.5; }
+
+  .frame { border: 1px solid #b9b9c0; border-radius: 12px; overflow: hidden; display: flex; flex-direction: row; }
+
+  .light { --surface0:#ffffff; --surface1:#fafafa; --surface2:#f4f4f5; --surface3:#e4e4e7; --surfaceSidebar:#f4f4f5;
+           --fg:#1a1a1e; --fgMuted:#71717a; --border:#e4e4e7; --accent:#20744A;
+           --dotSuccess:#299f51; --dotDanger:#f12e2f; --dotWarning:#b37824; --dotRunning:#268ae0;
+           --success:#3e704a; --danger:#9d433b; --warning:#7b5d39; }
+  .dark { --surface0:#181B1A; --surface1:#1E2120; --surface2:#272A29; --surface3:#434645; --surfaceSidebar:#141716;
+          --fg:#fafafa; --fgMuted:#A1A5A4; --border:#252B2A; --accent:#20744A;
+          --dotSuccess:#35c264; --dotDanger:#f7796d; --dotWarning:#db932e; --dotRunning:#5caaf6;
+          --success:#6cb17b; --danger:#d8847b; --warning:#c09664; }
+
+  .app { display: flex; flex-direction: row; width: 1240px; height: 860px; background: var(--surface0); }
+  .sidebar { width: 240px; background: var(--surfaceSidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 10px; gap: 2px; }
+  .sb-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 8px 10px 6px; }
+  .sb-item { display: flex; flex-direction: row; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; }
+  .sb-item span { font-size: 13px; color: var(--fg); }
+  .sb-item.muted span { color: var(--fgMuted); }
+  .sb-item.active { background: var(--surface3); }
+  .sb-dot { width: 14px; height: 14px; border-radius: 99px; display: flex; align-items: center; justify-content: center; }
+  .sb-dot span { font-size: 9px; color: #fff; }
+  .sb-flyte { background: var(--accent); }
+
+  .screen { flex: 1; display: flex; flex-direction: column; background: var(--surface0); }
+  .screen-header { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 28px 28px 12px; }
+  .screen-title { font-size: 21px; font-weight: 300; color: var(--fg); }
+  .screen-sub { font-size: 12px; color: var(--fgMuted); }
+  .summary { display: flex; flex-direction: row; gap: 8px; padding: 0 28px 14px; }
+  .sum-chip { display: flex; flex-direction: row; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 99px; padding: 4px 10px; background: var(--surface1); }
+  .sum-chip .d { width: 7px; height: 7px; border-radius: 99px; }
+  .sum-chip span { font-size: 11.5px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+
+  .split { flex: 1; display: flex; flex-direction: row; }
+  .list-col { width: 360px; background: var(--surfaceSidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .detail-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .day-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 12px 18px 6px; }
+  .row { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 8px; margin: 0 8px; }
+  .row.selected { background: var(--surface1); }
+  .dot { width: 8px; height: 8px; border-radius: 99px; }
+  .row-main { flex: 1; display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+  .row-name { font-size: 13px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .row-meta { font-size: 11.5px; color: var(--fgMuted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-trail { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+  .row-dur { font-size: 12px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .row-live { font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .row-prog { font-size: 11px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .chev { font-size: 14px; color: var(--fgMuted); line-height: 1; }
+  .load-more { display: flex; flex-direction: row; justify-content: center; padding: 12px; }
+  .load-more span { font-size: 13px; color: var(--fgMuted); }
+
+  .detail-body { padding: 24px 32px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+  .detail-title { font-size: 18px; font-weight: 300; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .detail-sub { font-size: 12px; color: var(--fgMuted); margin-top: 4px; }
+  .pill { display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; background: var(--surface3); border: 1px solid var(--border); align-self: flex-start; }
+  .pill span { font-size: 11px; color: var(--fg); font-weight: 500; }
+  .progress-block { display: flex; flex-direction: column; gap: 6px; }
+  .progress-label { font-size: 11px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .elapsed-row { display: flex; flex-direction: row; align-items: baseline; gap: 10px; }
+  .elapsed { font-size: 19px; font-weight: 400; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .elapsed-sub { font-size: 11.5px; color: var(--fgMuted); }
+  .track { height: 4px; border-radius: 99px; background: var(--surface3); display: flex; flex-direction: row; }
+  .fill { height: 4px; border-radius: 99px; }
+  .card { border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; background: var(--surface0); }
+  .card-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 12px 16px 8px; }
+  .card-row { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--border); }
+  .card-row .k { font-size: 12.5px; color: var(--fgMuted); width: 130px; }
+  .card-row .v { font-size: 12.5px; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .node-dur { margin-left: auto; font-size: 12px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .btn-outline { display: flex; flex-direction: row; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; align-self: flex-start; }
+  .btn-outline span { font-size: 13px; color: var(--fg); }
+  .url { font-size: 11px; color: var(--fgMuted); font-family: ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .phone-frame { border: 1px solid #b9b9c0; border-radius: 28px; padding: 10px; background: #c9c9cf; }
+  .phone { width: 390px; height: 860px; background: var(--surface0); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+  .ph-header { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 56px 18px 12px; border-bottom: 1px solid var(--border); }
+  .ph-back { font-size: 22px; color: var(--fgMuted); line-height: 1; }
+  .ph-title { font-size: 17px; font-weight: 400; color: var(--fg); }
+  .ph-list { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .ph-list .row { margin: 0 10px; }
+  .ph-detail-header { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 56px 18px 12px; border-bottom: 1px solid var(--border); }
+  .ph-detail-name { font-size: 14px; font-weight: 400; color: var(--fg); flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ph-detail-body { flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 18px; overflow: hidden; }
+
+  .state-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; }
+  .spinner { width: 26px; height: 26px; border-radius: 99px; border: 2.5px solid var(--surface3); border-top-color: var(--fgMuted); }
+  .state-text { font-size: 13px; color: var(--fgMuted); }
+  .alert { display: flex; flex-direction: column; gap: 8px; margin: 16px; border: 1px solid var(--danger); border-radius: 10px; padding: 12px 14px; }
+  .alert .t { font-size: 13px; font-weight: 500; color: var(--danger); }
+  .alert .d { font-size: 12px; color: var(--fgMuted); }
+</style>
+</head>
+<body>
+
+<!-- ================= STEADY / DESKTOP / LIGHT ================= -->
+<div class="caption">
+  <h2>Hybrid — desktop, light, steady state</h2>
+  <p>Ledger rows and day sections (concept A) + summary chips and node progress (concept B). Running rows carry a live elapsed plus a compact node hint — main-6fff59b-df70 shows "8h 32m · 5/6". The detail pane adds the progress bar and emphasized elapsed. All values real, pulled 2026-08-28; the blue dots pulse in the real app.</p>
+</div>
+<div class="frame"><div class="app light">
+  <div class="sidebar">
+    <div class="sb-label">Workspaces</div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#71717a"><span>E</span></div><span>ercot-power-flow-poc</span></div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#71717a"><span>P</span></div><span>paseo</span></div>
+    <div class="sb-label" style="margin-top:14px">Monitoring</div>
+    <div class="sb-item active"><div class="sb-dot sb-flyte"><span>✈</span></div><span>Flyte runs</span></div>
+  </div>
+  <div class="screen">
+    <div class="screen-header">
+      <div class="screen-title">Flyte runs</div>
+      <div class="screen-sub">ercot-power-flow-poc · experiments</div>
+    </div>
+    <div class="summary">
+      <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded today</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+    </div>
+    <div class="split">
+      <div class="list-col">
+        <div class="day-label">Today</div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">fix-volcano-memory-units-42373ce-344e</div><div class="row-meta">20:14 · standalone · s · coury · pr 1852</div></div>
+          <div class="row-trail"><div class="row-dur">15m 12s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">dv-ab-base-6fff59b-6fff59b-bbb2</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+          <div class="row-trail"><div class="row-dur">20m 49s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+          <div class="row-trail"><div class="row-dur">19m 31s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-8aac</div><div class="row-meta">12:33 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-dur">7h 55m</div><div class="chev">›</div></div></div>
+        <div class="row selected"><div class="dot" style="background:var(--dotRunning)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-df70</div><div class="row-meta">12:32 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-live">8h 32m</div><div class="row-prog">5/6</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotWarning)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-61b0</div><div class="row-meta">05:42 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-dur">2h 40m</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-b405</div><div class="row-meta">04:36 · dispatch · s · root</div></div>
+          <div class="row-trail"><div class="row-dur">4m 23s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-12a6</div><div class="row-meta">03:22 · standalone · s · root</div></div>
+          <div class="row-trail"><div class="row-dur">1h 13m</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-331e</div><div class="row-meta">03:01 · scenario · s · root</div></div>
+          <div class="row-trail"><div class="row-dur">19m 16s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">pf-battery-ab-treat-7293465-a28d</div><div class="row-meta">02:10 · scenario · s · joe · pr 1735</div></div>
+          <div class="row-trail"><div class="row-dur">2h 46m</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">pf-battery-ab-base-bae0be0-ca27</div><div class="row-meta">02:10 · scenario · s · joe · pr 1735</div></div>
+          <div class="row-trail"><div class="row-dur">2h 57m</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotWarning)"></div>
+          <div class="row-main"><div class="row-name">leak-2026-06-18-diff-0870b1d-a28b</div><div class="row-meta">00:56 · leak_diff · tyler</div></div>
+          <div class="row-trail"><div class="row-dur">6m 10s</div><div class="chev">›</div></div></div>
+        <div class="day-label">Yesterday</div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">mo-portfolio-scenario-dag-654c41a-cc68</div><div class="row-meta">22:47 · scenario · s · nate · pr 1841</div></div>
+          <div class="row-trail"><div class="row-dur">40m 08s</div><div class="chev">›</div></div></div>
+        <div class="load-more"><span>Load more</span></div>
+      </div>
+      <div class="detail-col">
+        <div class="detail-body">
+          <div>
+            <div class="detail-title">main-6fff59b-df70</div>
+            <div class="detail-sub">scenario · experiments · created 12:32 UTC</div>
+          </div>
+          <div class="elapsed-row"><div class="elapsed">8h 32m</div><div class="elapsed-sub">elapsed · running</div></div>
+          <div class="progress-block">
+            <div class="progress-label">5 of 6 nodes succeeded</div>
+            <div class="track"><div class="fill" style="width:83%;background:var(--dotRunning)"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Overview</div>
+            <div class="card-row"><div class="k">Date window</div><div class="v">2024-05-01 → 2025-02-28</div></div>
+            <div class="card-row"><div class="k">Size</div><div class="v">l</div></div>
+            <div class="card-row"><div class="k">Spark health</div><div class="v" style="color:var(--fgMuted)">Unavailable</div></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Labels</div>
+            <div class="card-row"><div class="k">authorized_by</div><div class="v">tom</div></div>
+            <div class="card-row"><div class="k">cluster</div><div class="v">office</div></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Nodes</div>
+            <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n0</div><div class="node-dur">32m 39s</div></div>
+            <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n1</div><div class="node-dur">4h 49m</div></div>
+            <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n2</div><div class="node-dur">46m 49s</div></div>
+            <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n3</div><div class="node-dur">23m 48s</div></div>
+            <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n4</div><div class="node-dur">51m 02s</div></div>
+            <div class="card-row"><div class="dot" style="background:var(--dotRunning)"></div><div class="v">n5</div><div class="node-dur">1h 09m</div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+            <div class="btn-outline"><span>Open in console</span></div>
+            <div class="url">flyte.cluster.zge/console/projects/ercot-power-flow-poc/domains/experiments/executions/main-6fff59b-df70</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ================= STEADY / PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Hybrid — phone, light, steady + detail</h2>
+  <p>Left: list with summary chips under the title; running row carries the 5/6 hint. Right: the detail screen from tapping it — back header, emphasized elapsed, progress bar, overview, labels, nodes, console link.</p>
+</div>
+<div style="display:flex;flex-direction:row;gap:24px;align-items:flex-start">
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="summary" style="padding:10px 14px 4px">
+      <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+    </div>
+    <div class="ph-list">
+      <div class="day-label">Today</div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">fix-volcano-memory-units-42373ce-344e</div><div class="row-meta">20:14 · standalone · s · coury</div></div>
+        <div class="row-trail"><div class="row-dur">15m 12s</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">dv-ab-base-6fff59b-6fff59b-bbb2</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+        <div class="row-trail"><div class="row-dur">20m 49s</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+        <div class="row-trail"><div class="row-dur">19m 31s</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">main-6fff59b-8aac</div><div class="row-meta">12:33 · scenario · l · tom</div></div>
+        <div class="row-trail"><div class="row-dur">7h 55m</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+        <div class="row-main"><div class="row-name">main-6fff59b-df70</div><div class="row-meta">12:32 · scenario · l · tom</div></div>
+        <div class="row-trail"><div class="row-live">8h 32m</div><div class="row-prog">5/6</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotWarning)"></div>
+        <div class="row-main"><div class="row-name">main-6fff59b-61b0</div><div class="row-meta">05:42 · scenario · l · tom</div></div>
+        <div class="row-trail"><div class="row-dur">2h 40m</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-b405</div><div class="row-meta">04:36 · dispatch · s · root</div></div>
+        <div class="row-trail"><div class="row-dur">4m 23s</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-12a6</div><div class="row-meta">03:22 · standalone · s · root</div></div>
+        <div class="row-trail"><div class="row-dur">1h 13m</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-331e</div><div class="row-meta">03:01 · scenario · s · root</div></div>
+        <div class="row-trail"><div class="row-dur">19m 16s</div></div></div>
+      <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+        <div class="row-main"><div class="row-name">pf-battery-ab-treat-7293465-a28d</div><div class="row-meta">02:10 · scenario · s · joe</div></div>
+        <div class="row-trail"><div class="row-dur">2h 46m</div></div></div>
+      <div class="load-more"><span>Load more</span></div>
+    </div>
+  </div></div>
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-detail-header"><div class="ph-back">‹</div><div class="ph-detail-name">main-6fff59b-df70</div>
+      <div class="dot" style="background:var(--dotRunning)"></div></div>
+    <div class="ph-detail-body">
+      <div class="elapsed-row"><div class="elapsed">8h 32m</div><div class="elapsed-sub">elapsed · running</div></div>
+      <div class="progress-block">
+        <div class="progress-label">5 of 6 nodes succeeded</div>
+        <div class="track"><div class="fill" style="width:83%;background:var(--dotRunning)"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Overview</div>
+        <div class="card-row"><div class="k">Created</div><div class="v">Today 12:32 UTC</div></div>
+        <div class="card-row"><div class="k">Workflow</div><div class="v">scenario</div></div>
+        <div class="card-row"><div class="k">Date window</div><div class="v">2024-05-01 → 2025-02-28</div></div>
+        <div class="card-row"><div class="k">Size</div><div class="v">l</div></div>
+        <div class="card-row"><div class="k">Spark health</div><div class="v" style="color:var(--fgMuted)">Unavailable</div></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Labels</div>
+        <div class="card-row"><div class="k">authorized_by</div><div class="v">tom</div></div>
+        <div class="card-row"><div class="k">cluster</div><div class="v">office</div></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Nodes</div>
+        <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n0</div><div class="node-dur">32m 39s</div></div>
+        <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n1</div><div class="node-dur">4h 49m</div></div>
+        <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n2</div><div class="node-dur">46m 49s</div></div>
+        <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n3</div><div class="node-dur">23m 48s</div></div>
+        <div class="card-row"><div class="dot" style="background:var(--dotSuccess)"></div><div class="v">n4</div><div class="node-dur">51m 02s</div></div>
+        <div class="card-row"><div class="dot" style="background:var(--dotRunning)"></div><div class="v">n5</div><div class="node-dur">1h 09m</div></div>
+      </div>
+      <div class="btn-outline"><span>Open in console</span></div>
+    </div>
+  </div></div>
+</div>
+
+<!-- ================= BUSY / PHONE / DARK ================= -->
+<div class="caption">
+  <h2>Hybrid — busy state, phone, dark</h2>
+  <p>The real 2026-08-26 20:36 UTC moment, 9 concurrent runs. The node hints are the real succeeded-node counts at that instant (0/7, 0/7, 1/3, 1/3, 1/10, 1/10, 5/7, 5/7, 4/7) — computed from node startedAt/duration data, not invented. Scanning the column tells you which runs are moving and which are stalled at zero.</p>
+</div>
+<div class="phone-frame"><div class="phone dark">
+  <div class="ph-header"><div class="ph-title">Flyte runs</div><div class="screen-sub" style="margin-left:auto">Aug 26</div></div>
+  <div class="summary" style="padding:10px 14px 4px">
+    <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>9 running</span></div>
+  </div>
+  <div class="ph-list">
+    <div class="day-label">Today</div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">verify-pr1784-full-post-1eaf34f-845e</div><div class="row-meta">20:36 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-live">0m</div><div class="row-prog">0/7</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">feature-contingency-island-lodf-8558f7f-27a2</div><div class="row-meta">20:32 · standalone · m · tom</div></div>
+      <div class="row-trail"><div class="row-live">3m 47s</div><div class="row-prog">0/7</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">verify-battery-partial-hours-00d6e8d-7276</div><div class="row-meta">20:22 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-live">14m 05s</div><div class="row-prog">1/3</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">verify-battery-partial-hours-00d6e8d-fd5e</div><div class="row-meta">20:21 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-live">14m 25s</div><div class="row-prog">1/3</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">main-ced09dd-74e6</div><div class="row-meta">19:45 · scenario · s · tom</div></div>
+      <div class="row-trail"><div class="row-live">50m 55s</div><div class="row-prog">1/10</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">scenario-sample-without-replacement-fa65aeb-c7de</div><div class="row-meta">19:44 · scenario · s · tom</div></div>
+      <div class="row-trail"><div class="row-live">52m 01s</div><div class="row-prog">1/10</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">jul25-oracle-renew-ede5c16-2716</div><div class="row-meta">18:53 · scenario · s · tom</div></div>
+      <div class="row-trail"><div class="row-live">1h 43m</div><div class="row-prog">5/7</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">jul25-oracle-thermal-cd35d66-b381</div><div class="row-meta">18:27 · scenario · s · tom</div></div>
+      <div class="row-trail"><div class="row-live">2h 09m</div><div class="row-prog">5/7</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">main-72629b8-fb00</div><div class="row-meta">17:56 · standalone · m · tom</div></div>
+      <div class="row-trail"><div class="row-live">2h 40m</div><div class="row-prog">4/7</div></div></div>
+  </div>
+</div></div>
+
+<!-- ================= LOADING + ERROR / PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Hybrid — loading and error states, phone, light</h2>
+  <p>Left: first page load — chips render as empty shells so nothing shifts when data lands. Right: Flyte unreachable — one alert, Retry, nothing else. With recent-N there is no standing empty state after the first successful load.</p>
+</div>
+<div style="display:flex;flex-direction:row;gap:24px;align-items:flex-start">
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="summary" style="padding:10px 14px 4px">
+      <div class="sum-chip" style="opacity:0.5"><div class="d" style="background:var(--surface3)"></div><span>— running</span></div>
+      <div class="sum-chip" style="opacity:0.5"><div class="d" style="background:var(--surface3)"></div><span>— succeeded</span></div>
+    </div>
+    <div class="state-box">
+      <div class="spinner"></div>
+      <div class="state-text">Loading…</div>
+    </div>
+  </div></div>
+  <div class="phone-frame"><div class="phone light">
+    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="alert">
+      <div class="t">Unable to reach Flyte</div>
+      <div class="d">flyte.cluster.zge did not respond. The daemon will keep retrying while this screen is open.</div>
+      <div class="btn-outline" style="align-self:flex-start"><span>Retry</span></div>
+    </div>
+    <div class="state-box">
+      <div class="state-text">No executions loaded</div>
+    </div>
+  </div></div>
+</div>
+
+</body>
+</html>
