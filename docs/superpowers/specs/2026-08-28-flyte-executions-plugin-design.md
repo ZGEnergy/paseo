@@ -7,7 +7,7 @@ Mockups: `mockups/flyte-plugin/concept-a.html`, `concept-b.html`, `concept-hybri
 
 Paseo has no visibility into Flyte executions. Answering "did last night's run finish?" or "which task is stuck right now?" today means the Flyte console or the repo's Python CLI — neither is glanceable from a phone. The plugin adds a read-only Flyte runs surface to Paseo, backed by the anonymous flyteadmin REST API at `http://flyte.cluster.zge` (verified: `/home/joe/code/zge-workspace/ercot-power-flow-poc/src/zge_ercot_power_flow/flyte/admin_client.py:189`).
 
-Target project: `ercot-power-flow-poc`, domain `experiments`. More projects later; v1 scopes via env overrides.
+Target project: `ercot-power-flow-poc`, domain `experiments`, with an in-app project switcher (the cluster also has `market-ercot` and `sandbox`).
 
 ## Which runs — the settled decision
 
@@ -22,6 +22,7 @@ Sub-decisions:
 - **Pagination**: first page 25, "Load more" appends 25 per press (react-query `useInfiniteQuery`, admin `token` param).
 - **CI filter**: executions on workflows starting `.flytegen.` (the `ledger-*` "verify and land" automation, no labels) are filtered out in the plugin server. The panel shows human-launched runs.
 - **Label filtering**: none in v1. Labels render as data. (Admin cannot filter by label server-side — `query.py:207` filters client-side; same constraint applies to us.)
+- **Project switcher**: the header's muted `project · domain` text is a Pressable with a small ChevronDown `Icon`; tapping expands a transient inline list (hand-built View/Text — plugins get no DropdownMenu primitive). The cluster exposes three projects today (`ercot-power-flow-poc`, `market-ercot`, `sandbox`, all domain `experiments`, via `GET /api/v1/projects`). Selecting one re-keys the runs queries; the selection is sticky — the plugin server records the last viewed project in a small JSON state file, so the next open starts there from any client device (there is no plugin storage API, and browser storage is per-device web-only — `public-docs/plugins/reference.md:86`). Domain stays fixed at the env default; all three projects have only `experiments`.
 
 Real-data facts the design depends on (pulled 2026-08-28):
 
@@ -68,6 +69,7 @@ export const listExecutionsRpc = defineRpc({
   input: z.object({
     cursor: z.string().nullable(), // admin page token; null = first page
     pageSize: z.number().int().min(1).max(100),
+    project: z.string().optional(), // omitted = sticky last-viewed project (server default)
   }),
   output: z.object({
     executions: z.array(executionSummary),
@@ -77,7 +79,7 @@ export const listExecutionsRpc = defineRpc({
 
 export const executionDetailRpc = defineRpc({
   name: "flyte.executions.detail",
-  input: z.object({ name: z.string() }),
+  input: z.object({ name: z.string(), project: z.string().optional() }),
   output: z.object({
     execution: executionSummary,
     nodes: z.array(
@@ -111,6 +113,30 @@ export const clusterUsageRpc = defineRpc({
 });
 ```
 
+The project preference RPCs (same block):
+
+```ts
+export const listProjectsRpc = defineRpc({
+  name: "flyte.projects.list",
+  input: z.object({}).strict(),
+  output: z.object({
+    projects: z.array(
+      z.object({
+        id: z.string(),
+        domains: z.array(z.string()),
+      }),
+    ),
+    lastProject: z.string().nullable(), // sticky preference; null = never switched
+  }),
+});
+
+export const setProjectPreferenceRpc = defineRpc({
+  name: "flyte.preferences.setProject",
+  input: z.object({ project: z.string() }),
+  output: z.object({}).strict(),
+});
+```
+
 ## Server behavior (`*.server.ts`, plain Node fetch — no Python, no subprocess)
 
 - Config: `FLYTE_ADMIN_URL` (default `http://flyte.cluster.zge`), `FLYTE_PROJECT` (default `ercot-power-flow-poc`), `FLYTE_DOMAIN` (default `experiments`) — mirrors `resolve_admin_url` in `admin_client.py:138`.
@@ -119,6 +145,10 @@ export const clusterUsageRpc = defineRpc({
 - `consoleUrl`: `{base}/console/projects/{project}/domains/{domain}/executions/{name}`.
 - Timeouts 10s per request. Transport failures reject the RPC with a stable prefix (`Flyte unreachable: …`); 404 on detail rejects `Execution not found`.
 - Durations parse from the wire's `"912.864954004s"` format to seconds server-side.
+
+- Projects: `GET {base}/api/v1/projects` → `[{id, domains}]`. Cached in memory for 5 minutes (the set rarely changes).
+- Sticky preference: a single JSON state file, `$PASEO_HOME/flyte-runs-state.json` when `PASEO_HOME` is set, else `~/.paseo/flyte-runs-state.json` — `{ lastProject: string | null }`. Read at startup and on `flyte.projects.list`; written by `flyte.preferences.setProject` (atomic write, best-effort — a failed write degrades to in-memory stickiness and never blocks the UI). Machine-local filesystem work in `*.server.ts` is the sanctioned pattern; there is no plugin storage API (`public-docs/plugins/reference.md:86`). The preference is daemon-wide (single-user), not per-device.
+- RPC `project` input fields: when omitted, resolve as sticky `lastProject` → `FLYTE_PROJECT` env default → `ercot-power-flow-poc`. The cluster card ignores project — racks are cluster-scoped.
 
 ### Cluster usage (`flyte.cluster.usage`)
 
@@ -172,7 +202,7 @@ Plugins are disabled on the production daemon (`~/.paseo/config.json` has no `pl
 - Triggering runs (submission has a source-resolution and labeling contract guarded by the ercot-run-monitoring skill; v2 candidate via the admin launch endpoint)
 - Agent attribution — no `paseo-agent=<PASEO_AGENT_ID>` label on submit, no grouping by agent, no deep-links to agent tabs. `authorized_by` already names the human launcher. Future option: stamp the label in the submit CLI; the contract above needs no change to consume it later.
 - Workflow filter UI, label search, `name_contains`, time-window queries (all supported by the admin API when wanted)
-- Multi-project switching (env overrides only)
+- Domain switching (every project on this cluster has only `experiments`; the env default covers it)
 - Notifications / push
 - In-app log viewing (log URIs link out)
 - Refreshing data while the screen is closed (queries stop with the surface)

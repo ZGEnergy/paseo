@@ -38,6 +38,15 @@
   .screen-header { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 28px 28px 12px; }
   .screen-title { font-size: 21px; font-weight: 300; color: var(--fg); }
   .screen-sub { font-size: 12px; color: var(--fgMuted); }
+  .proj-trigger { display: flex; flex-direction: row; align-items: center; gap: 3px; }
+  .proj-trigger .t { font-size: 12px; color: var(--fgMuted); }
+  .proj-trigger .c { font-size: 10px; color: var(--fgMuted); line-height: 1; }
+  .proj-menu { border: 1px solid var(--border); border-radius: 10px; background: var(--surface1); margin: 4px 18px 10px; display: flex; flex-direction: column; overflow: hidden; }
+  .proj-row { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 9px 14px; }
+  .proj-row + .proj-row { border-top: 1px solid var(--border); }
+  .proj-row .id { font-size: 13px; color: var(--fg); flex: 1; }
+  .proj-row .dom { font-size: 11px; color: var(--fgMuted); }
+  .proj-row .check { font-size: 13px; color: var(--accent); line-height: 1; }
   .summary { display: flex; flex-direction: row; gap: 8px; padding: 0 28px 14px; }
   .sum-chip { display: flex; flex-direction: row; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 99px; padding: 4px 10px; background: var(--surface1); }
   .sum-chip .d { width: 7px; height: 7px; border-radius: 99px; }
@@ -121,7 +130,7 @@
   <div class="screen">
     <div class="screen-header">
       <div class="screen-title">Flyte runs</div>
-      <div class="screen-sub">ercot-power-flow-poc · experiments</div>
+      <div class="proj-trigger"><div class="t">ercot-power-flow-poc · experiments</div><div class="c">⌄</div></div>
     </div>
     <div class="summary">
       <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
@@ -221,7 +230,7 @@
 </div>
 <div style="display:flex;flex-direction:row;gap:24px;align-items:flex-start">
   <div class="phone-frame"><div class="phone light">
-    <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+    <div class="ph-header" style="flex-direction:column;align-items:flex-start;gap:2px"><div style="display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%"><div class="ph-title">Flyte runs</div><div class="proj-trigger"><div class="t">ercot-power-flow-poc</div><div class="c">⌄</div></div></div></div>
     <div class="summary" style="padding:10px 14px 4px">
       <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
       <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded</span></div>
@@ -304,7 +313,7 @@
   <p>The real 2026-08-26 20:36 UTC moment, 9 concurrent runs. The node hints are the real succeeded-node counts at that instant (0/7, 0/7, 1/3, 1/3, 1/10, 1/10, 5/7, 5/7, 4/7) — computed from node startedAt/duration data, not invented. Scanning the column tells you which runs are moving and which are stalled at zero.</p>
 </div>
 <div class="phone-frame"><div class="phone dark">
-  <div class="ph-header"><div class="ph-title">Flyte runs</div><div class="screen-sub" style="margin-left:auto">Aug 26</div></div>
+  <div class="ph-header" style="flex-direction:column;align-items:flex-start;gap:2px"><div style="display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%"><div class="ph-title">Flyte runs</div><div class="proj-trigger"><div class="t">ercot-power-flow-poc</div><div class="c">⌄</div></div></div></div>
   <div class="summary" style="padding:10px 14px 4px">
     <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>9 running</span></div>
   </div>
@@ -369,6 +378,37 @@
     </div>
   </div></div>
 </div>
+
+<!-- ================= PROJECT SWITCHER OPEN / PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Project switcher — open state, phone, light</h2>
+  <p>The header's muted project text is the trigger (a Pressable with a small ChevronDown Icon — plugins have no DropdownMenu primitive, so this is hand-built View/Text). Tapping expands a transient inline list below the header; selecting a project re-keys the runs queries and collapses it. The three projects are real — pulled from GET /api/v1/projects on the cluster. The selection is sticky: the plugin server records the last viewed project in a small JSON state file (machine-local work is the sanctioned server-half job; there is no plugin storage API), so the next open starts where you left off, on any device. The cluster usage card is project-independent and stays as-is.</p>
+</div>
+<div class="phone-frame"><div class="phone light">
+  <div class="ph-header" style="flex-direction:column;align-items:flex-start;gap:2px"><div style="display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%"><div class="ph-title">Flyte runs</div><div class="proj-trigger"><div class="t">ercot-power-flow-poc</div><div class="c">⌃</div></div></div></div>
+  <div class="proj-menu">
+    <div class="proj-row"><div class="id">ercot-power-flow-poc</div><div class="dom">experiments</div><div class="check">✓</div></div>
+    <div class="proj-row"><div class="id">market-ercot</div><div class="dom">experiments</div></div>
+    <div class="proj-row"><div class="id">sandbox</div><div class="dom">experiments</div></div>
+  </div>
+  <div class="summary" style="padding:2px 14px 4px">
+    <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+  </div>
+  <div class="ph-list">
+    <div class="day-label">Today</div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">fix-volcano-memory-units-42373ce-344e</div><div class="row-meta">20:14 · standalone · s · coury</div></div>
+      <div class="row-trail"><div class="row-dur">15m 12s</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">dv-ab-base-6fff59b-6fff59b-bbb2</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-dur">20m 49s</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">main-6fff59b-df70</div><div class="row-meta">12:32 · scenario · l · tom</div></div>
+      <div class="row-trail"><div class="row-live">8h 32m</div><div class="row-prog">5/6</div></div></div>
+  </div>
+</div></div>
 
 </body>
 </html>
