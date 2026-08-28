@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Spike — Cluster usage (one-line racks)</title>
+<style>
+  /* React Native View/Text expressible only: flexbox, border, borderRadius, backgroundColor. No grid, no SVG, no pseudo-elements. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #d8d8dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 40px 0; }
+
+  .caption { max-width: 1240px; width: 100%; padding: 0 20px; display: flex; flex-direction: column; gap: 4px; }
+  .caption h2 { font-size: 16px; font-weight: 600; color: #1a1a1e; }
+  .caption p { font-size: 13px; color: #55555c; line-height: 1.5; }
+
+  .frame { border: 1px solid #b9b9c0; border-radius: 12px; overflow: hidden; display: flex; flex-direction: row; }
+
+  .light { --surface0:#ffffff; --surface1:#fafafa; --surface2:#f4f4f5; --surface3:#e4e4e7; --surfaceSidebar:#f4f4f5;
+           --fg:#1a1a1e; --fgMuted:#71717a; --border:#e4e4e7; --accent:#20744A;
+           --dotSuccess:#299f51; --dotDanger:#f12e2f; --dotWarning:#b37824; --dotRunning:#268ae0; }
+  .dark { --surface0:#181B1A; --surface1:#1E2120; --surface2:#272A29; --surface3:#434645; --surfaceSidebar:#141716;
+          --fg:#fafafa; --fgMuted:#A1A5A4; --border:#252B2A; --accent:#20744A;
+          --dotSuccess:#35c264; --dotDanger:#f7796d; --dotWarning:#db932e; --dotRunning:#5caaf6; }
+
+  .app { display: flex; flex-direction: row; width: 1240px; height: 860px; background: var(--surface0); }
+  .sidebar { width: 240px; background: var(--surfaceSidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 16px 10px; gap: 2px; }
+  .sb-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 8px 10px 6px; }
+  .sb-item { display: flex; flex-direction: row; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; }
+  .sb-item span { font-size: 13px; color: var(--fg); }
+  .sb-item.muted span { color: var(--fgMuted); }
+  .sb-item.active { background: var(--surface3); }
+  .sb-dot { width: 14px; height: 14px; border-radius: 99px; display: flex; align-items: center; justify-content: center; }
+  .sb-dot span { font-size: 9px; color: #fff; }
+  .sb-flyte { background: var(--accent); }
+
+  .screen { flex: 1; display: flex; flex-direction: column; background: var(--surface0); }
+  .screen-header { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 28px 28px 12px; }
+  .screen-title { font-size: 21px; font-weight: 300; color: var(--fg); }
+  .screen-sub { font-size: 12px; color: var(--fgMuted); }
+  .summary { display: flex; flex-direction: row; gap: 8px; padding: 0 28px 14px; }
+  .sum-chip { display: flex; flex-direction: row; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 99px; padding: 4px 10px; background: var(--surface1); }
+  .sum-chip .d { width: 7px; height: 7px; border-radius: 99px; }
+  .sum-chip span { font-size: 11.5px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+
+  .split { flex: 1; display: flex; flex-direction: row; }
+  .list-col { width: 360px; background: var(--surfaceSidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .detail-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .day-label { font-size: 11px; font-weight: 500; color: var(--fgMuted); padding: 12px 18px 6px; }
+  .row { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 8px; margin: 0 8px; }
+  .row.selected { background: var(--surface1); }
+  .dot { width: 8px; height: 8px; border-radius: 99px; }
+  .row-main { flex: 1; display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+  .row-name { font-size: 13px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .row-meta { font-size: 11.5px; color: var(--fgMuted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-trail { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+  .row-dur { font-size: 12px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .row-live { font-size: 12px; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .row-prog { font-size: 11px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .chev { font-size: 14px; color: var(--fgMuted); line-height: 1; }
+
+  /* ---------- cluster section (one-line racks) ---------- */
+  .cluster-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface1); margin: 0 8px 4px; display: flex; flex-direction: column; }
+  .rack-row { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 9px 12px; }
+  .rack-row + .rack-row { border-top: 1px solid var(--border); }
+  .rack-name { font-size: 12.5px; color: var(--fg); }
+  .rack-cap { font-size: 10.5px; color: var(--fgMuted); font-variant-numeric: tabular-nums; }
+  .rack-bars { margin-left: auto; display: flex; flex-direction: row; align-items: center; gap: 9px; }
+  .bar-group { display: flex; flex-direction: row; align-items: center; gap: 5px; }
+  .bar-label { font-size: 10px; color: var(--fgMuted); }
+  .track { width: 42px; height: 4px; border-radius: 99px; background: var(--surface3); display: flex; flex-direction: row; overflow: hidden; }
+  .fill { height: 4px; border-radius: 99px; background: var(--fgMuted); }
+  .bar-val { font-size: 11px; color: var(--fgMuted); width: 25px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .phone-frame { border: 1px solid #b9b9c0; border-radius: 28px; padding: 10px; background: #c9c9cf; }
+  .phone { width: 390px; height: 860px; background: var(--surface0); border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; }
+  .ph-header { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 56px 18px 12px; border-bottom: 1px solid var(--border); }
+  .ph-title { font-size: 17px; font-weight: 400; color: var(--fg); }
+  .ph-list { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .ph-list .row { margin: 0 10px; }
+  .ph-list .cluster-card { margin: 0 10px 4px; }
+</style>
+</head>
+<body>
+
+<!-- ================= PHONE / LIGHT ================= -->
+<div class="caption">
+  <h2>Cluster usage — phone, light</h2>
+  <p>One line per rack: name, exact core count, RAM rounded to 10Gi, CPU and Mem bars right-aligned. Values from a verified kubectl pull at 22:39 UTC 2026-08-28 — Rack 1 (big*, 8 nodes) 2526 cores / 9940Gi, CPU 2.2%, Mem 11%; Rack 2 (mid*, 18 nodes) 2016 cores / 8990Gi, CPU 7.7%, Mem 12%. The running execution's 39 n6 executor pods (8–9.5 cores each) spread across both racks produce these numbers. CPU renders with one decimal — integer rounding showed a misleading flat "0%" during a CPU-idle DAG stage while executors held 2.9Ti of memory. This card polls every 15s (matched to metrics-server's --metric-resolution=15s — faster polls return identical data); the runs list keeps its 30s poll; both stop when the screen closes. cupk8 + minio are excluded (infra, not run-scheduling compute). Bars are the same track/fill View pair as the node progress bar; fill is fgMuted, no status color.</p>
+</div>
+<div class="phone-frame"><div class="phone light">
+  <div class="ph-header"><div class="ph-title">Flyte runs</div></div>
+  <div class="summary" style="padding:10px 14px 4px">
+    <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded</span></div>
+    <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+  </div>
+  <div class="ph-list">
+    <div class="day-label">Cluster · 22:39</div>
+    <div class="cluster-card">
+      <div class="rack-row">
+        <div class="rack-name">Rack 1</div>
+        <div class="rack-cap">2526c · 9940Gi</div>
+        <div class="rack-bars">
+          <div class="bar-group"><div class="bar-label">CPU</div><div class="track"><div class="fill" style="width:2.2%"></div></div><div class="bar-val">2.2%</div></div>
+          <div class="bar-group"><div class="bar-label">Mem</div><div class="track"><div class="fill" style="width:11%"></div></div><div class="bar-val">11%</div></div>
+        </div>
+      </div>
+      <div class="rack-row">
+        <div class="rack-name">Rack 2</div>
+        <div class="rack-cap">2016c · 8990Gi</div>
+        <div class="rack-bars">
+          <div class="bar-group"><div class="bar-label">CPU</div><div class="track"><div class="fill" style="width:7.7%"></div></div><div class="bar-val">7.7%</div></div>
+          <div class="bar-group"><div class="bar-label">Mem</div><div class="track"><div class="fill" style="width:12%"></div></div><div class="bar-val">12%</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="day-label">Today</div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">fix-volcano-memory-units-42373ce-344e</div><div class="row-meta">20:14 · standalone · s · coury</div></div>
+      <div class="row-trail"><div class="row-dur">15m 12s</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">dv-ab-base-6fff59b-6fff59b-bbb2</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-dur">20m 49s</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+      <div class="row-trail"><div class="row-dur">19m 31s</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">main-6fff59b-8aac</div><div class="row-meta">12:33 · scenario · l · tom</div></div>
+      <div class="row-trail"><div class="row-dur">7h 55m</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotRunning)"></div>
+      <div class="row-main"><div class="row-name">main-6fff59b-df70</div><div class="row-meta">12:32 · scenario · l · tom</div></div>
+      <div class="row-trail"><div class="row-live">8h 32m</div><div class="row-prog">5/6</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotWarning)"></div>
+      <div class="row-main"><div class="row-name">main-6fff59b-61b0</div><div class="row-meta">05:42 · scenario · l · tom</div></div>
+      <div class="row-trail"><div class="row-dur">2h 40m</div></div></div>
+    <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+      <div class="row-main"><div class="row-name">cachewarm-2026-q2-bae0be0-b405</div><div class="row-meta">04:36 · dispatch · s · root</div></div>
+      <div class="row-trail"><div class="row-dur">4m 23s</div></div></div>
+  </div>
+</div></div>
+
+<!-- ================= DESKTOP / DARK ================= -->
+<div class="caption">
+  <h2>Cluster usage — desktop, dark</h2>
+  <p>The same two rows at the top of the list column in the desktop split, dark theme. Data path: Kubernetes API — the plugin server reads the kubeconfig client cert (cert-based, no exec plugin — plain Node fetch works) and queries metrics.k8s.io node metrics plus node allocatables. The cluster query refetches every 15s, matched to metrics-server's resolution; the runs list stays at 30s.</p>
+</div>
+<div class="frame"><div class="app dark">
+  <div class="sidebar">
+    <div class="sb-label">Workspaces</div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#717574"><span>E</span></div><span>ercot-power-flow-poc</span></div>
+    <div class="sb-item muted"><div class="sb-dot" style="background:#717574"><span>P</span></div><span>paseo</span></div>
+    <div class="sb-label" style="margin-top:14px">Monitoring</div>
+    <div class="sb-item active"><div class="sb-dot sb-flyte"><span>✈</span></div><span>Flyte runs</span></div>
+  </div>
+  <div class="screen">
+    <div class="screen-header">
+      <div class="screen-title">Flyte runs</div>
+      <div class="screen-sub">ercot-power-flow-poc · experiments</div>
+    </div>
+    <div class="summary">
+      <div class="sum-chip"><div class="d" style="background:var(--dotRunning)"></div><span>1 running</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotSuccess)"></div><span>9 succeeded today</span></div>
+      <div class="sum-chip"><div class="d" style="background:var(--dotWarning)"></div><span>2 aborted</span></div>
+    </div>
+    <div class="split">
+      <div class="list-col">
+        <div class="day-label">Cluster · 22:39</div>
+        <div class="cluster-card">
+          <div class="rack-row">
+            <div class="rack-name">Rack 1</div>
+            <div class="rack-cap">2526c · 9940Gi</div>
+            <div class="rack-bars">
+              <div class="bar-group"><div class="bar-label">CPU</div><div class="track"><div class="fill" style="width:2.2%"></div></div><div class="bar-val">2.2%</div></div>
+              <div class="bar-group"><div class="bar-label">Mem</div><div class="track"><div class="fill" style="width:11%"></div></div><div class="bar-val">11%</div></div>
+            </div>
+          </div>
+          <div class="rack-row">
+            <div class="rack-name">Rack 2</div>
+            <div class="rack-cap">2016c · 8990Gi</div>
+            <div class="rack-bars">
+              <div class="bar-group"><div class="bar-label">CPU</div><div class="track"><div class="fill" style="width:7.7%"></div></div><div class="bar-val">7.7%</div></div>
+              <div class="bar-group"><div class="bar-label">Mem</div><div class="track"><div class="fill" style="width:12%"></div></div><div class="bar-val">12%</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="day-label">Today</div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">fix-volcano-memory-units-42373ce-344e</div><div class="row-meta">20:14 · standalone · s · coury · pr 1852</div></div>
+          <div class="row-trail"><div class="row-dur">15m 12s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">dv-ab-base-6fff59b-6fff59b-bbb2</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+          <div class="row-trail"><div class="row-dur">20m 49s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">dv-ab-treat-b9b7a3a-b9b7a3a-f3de</div><div class="row-meta">16:00 · scenario · s · joe</div></div>
+          <div class="row-trail"><div class="row-dur">19m 31s</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotSuccess)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-8aac</div><div class="row-meta">12:33 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-dur">7h 55m</div><div class="chev">›</div></div></div>
+        <div class="row selected"><div class="dot" style="background:var(--dotRunning)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-df70</div><div class="row-meta">12:32 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-live">8h 32m</div><div class="row-prog">5/6</div><div class="chev">›</div></div></div>
+        <div class="row"><div class="dot" style="background:var(--dotWarning)"></div>
+          <div class="row-main"><div class="row-name">main-6fff59b-61b0</div><div class="row-meta">05:42 · scenario · l · tom</div></div>
+          <div class="row-trail"><div class="row-dur">2h 40m</div><div class="chev">›</div></div></div>
+      </div>
+      <div class="detail-col">
+        <div style="padding:24px 32px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+          <div class="row-name" style="font-size:18px;font-weight:300;color:var(--fg)">main-6fff59b-df70</div>
+          <div class="row-meta">scenario · experiments · created 12:32 UTC</div>
+          <div class="row-trail"><div class="row-live" style="font-size:19px">8h 32m</div><div class="row-meta">elapsed · 5 of 6 nodes succeeded</div></div>
+          <div class="track" style="width:100%;height:4px;border-radius:99px;background:var(--surface3);display:flex;flex-direction:row"><div class="fill" style="width:83%;background:var(--dotRunning)"></div></div>
+          <div class="row-meta">Detail pane unchanged from the approved hybrid design — the cluster card lives only in the list column.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+</body>
+</html>

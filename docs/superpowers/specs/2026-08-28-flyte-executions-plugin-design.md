@@ -1,7 +1,7 @@
 # Flyte executions plugin — design
 
 Status: design approved 2026-08-28. No implementation this session.
-Mockups: `mockups/flyte-plugin/concept-a.html`, `concept-b.html`, `concept-hybrid.html` (hybrid is the settled design).
+Mockups: `mockups/flyte-plugin/concept-a.html`, `concept-b.html`, `concept-hybrid.html` (hybrid is the settled runs design), `spike-cluster.html` (cluster usage card).
 
 ## Problem
 
@@ -92,6 +92,23 @@ export const executionDetailRpc = defineRpc({
     ),
   }),
 });
+
+export const clusterUsageRpc = defineRpc({
+  name: "flyte.cluster.usage",
+  input: z.object({}).strict(),
+  output: z.object({
+    racks: z.array(
+      z.object({
+        name: z.string(), // "Rack 1" | "Rack 2"
+        cores: z.number(), // exact allocatable core sum
+        memoryGi: z.number(), // allocatable RAM rounded to 10Gi
+        cpuPercent: z.number(), // one decimal; usage over allocatable
+        memPercent: z.number(), // integer
+      }),
+    ),
+    fetchedAt: z.string(), // ISO 8601
+  }),
+});
 ```
 
 ## Server behavior (`*.server.ts`, plain Node fetch — no Python, no subprocess)
@@ -103,10 +120,19 @@ export const executionDetailRpc = defineRpc({
 - Timeouts 10s per request. Transport failures reject the RPC with a stable prefix (`Flyte unreachable: …`); 404 on detail rejects `Execution not found`.
 - Durations parse from the wire's `"912.864954004s"` format to seconds server-side.
 
+### Cluster usage (`flyte.cluster.usage`)
+
+- Kubernetes API, not flyteadmin: `GET /apis/metrics.k8s.io/v1beta1/nodes` (usage) + `GET /api/v1/nodes` (allocatable). The kubeconfig on the daemon host uses client-cert auth (no exec plugin — verified), so plain Node fetch with the cert from `~/.kube/config` works; no kubectl subprocess.
+- Rack mapping is convention, not cluster data — no rack labels exist in Kubernetes. `big*`/`bigbig*`/`biggpu` → Rack 1; `mid*` → Rack 2. `cupk8` and `minio*` are excluded (infra, not run-scheduling compute). Node renames break the mapping silently — the name-prefix table lives in one constant.
+- Percentages are usage over allocatable, aggregated per rack — not node-percentage averages. Cores render exact; RAM rounds to 10Gi.
+- Refresh: every 15s, matched to metrics-server's `--metric-resolution=15s` (verified in the deployment args) — faster polls return identical data. The runs list keeps its 30s poll. Both stop when the screen closes.
+- Failure degrades to the card showing "Unavailable"; it never blocks the runs list (separate query cache).
+
 ## Client design (`*.client.tsx`)
 
 Information hierarchy:
 
+- Cluster card above the day list: one line per rack — `Rack 1  2526c · 9940Gi` with CPU and Mem bars right-aligned. CPU renders with one decimal (integer rounding once showed a misleading flat "0%" during a CPU-idle DAG stage while executors held 2.9Ti of memory — verified the hard way). Bars are the same track/fill View pair as the node progress bar; fill is `foregroundMuted`, no status color. Polls at 15s.
 - Row (two lines): status dot · execution name (single line, tail ellipsis) · meta `HH:MM · workflow · size · authorized_by [· pr N]` · trailing duration (terminal) or live elapsed + `succeeded/total` hint (running, e.g. `8h 32m · 5/6`) · chevron (desktop). All times render in the device's local timezone (user choice; the mockups show UTC).
 - Date window and full labels live behind the tap in the detail — they don't fit a phone row and the name prefix usually encodes them.
 - Summary chips under the screen title: `N running · N succeeded today · N aborted` (computed from loaded pages; "today" = device-local midnight). During the busy moment this collapses to `9 running`.
@@ -138,7 +164,7 @@ Platform constraints honored: host-provided externals only (react, react-native,
 
 ## Prerequisite (user decision, not taken)
 
-Plugins are disabled on the production daemon (`~/.paseo/config.json` has no `pluginsEnabled`). Enabling is runtime-safe (`paseo reload`, no daemon restart — port 6767 stays up). Plugin code is trusted and unsandboxed: the server half runs with the user's credentials on the dev box; the client half runs inside the Paseo app. Do not enable on the user's behalf.
+Plugins are disabled on the production daemon (`~/.paseo/config.json` has no `pluginsEnabled`). Enabling is runtime-safe (`paseo reload`, no daemon restart — port 6767 stays up). Plugin code is trusted and unsandboxed: the server half runs with the user's credentials on the dev box; the client half runs inside the Paseo app. Do not enable on the user's behalf. The cluster usage section additionally reads the kubeconfig client cert — the plugin server holds cluster read credentials while it runs.
 
 ## Out of scope for v1
 
