@@ -36,7 +36,7 @@ Real-data facts the design depends on (pulled 2026-08-28):
 
 Sidebar item **"Flyte runs"** opening a full screen (`plugin.addSidebarItem` + `plugin.addSurface("main", …)`), plus a Command Center item that opens the same screen (`plugin.addCommandCenterItem`). Chosen over a workspace panel because executions are project-scoped, not workspace-scoped — the same data would repeat identically in every sibling workspace tab, and a panel is a tap deeper on mobile. Lucide icon proposal: `Plane`.
 
-Desktop: settings-shell list+detail — 360px list column on `surfaceSidebar`, detail pane right. Phone: full-screen list; tapping a row pushes a detail screen with a back header. One `layout.compact` branch, same components.
+Desktop: settings-shell list+detail — the canonical 320px list column (`SETTINGS_DESKTOP_SIDEBAR_WIDTH`, `packages/app/src/constants/layout.ts`) on `surfaceSidebar`, detail pane right. Phone: the list and detail are both in-surface views — plugins cannot push routes or retitle the host header (`PluginSurfaceProps` carries only theme/host/layout, `packages/plugin/src/contracts.ts:23-35`; the host always renders its own `ScreenHeader`, `packages/app/src/plugins/surface-screen.tsx`). Tapping a row swaps the body to the detail view with a body-level back control ("‹ Flyte runs") under the persistent host header; desktop keeps both panes visible. One `layout.compact` branch, same components.
 
 ## RPC contract (Zod sketch)
 
@@ -140,10 +140,10 @@ export const setProjectPreferenceRpc = defineRpc({
 ## Server behavior (`*.server.ts`, plain Node fetch — no Python, no subprocess)
 
 - Config: `FLYTE_ADMIN_URL` (default `http://flyte.cluster.zge`), `FLYTE_PROJECT` (default `ercot-power-flow-poc`), `FLYTE_DOMAIN` (default `experiments`) — mirrors `resolve_admin_url` in `admin_client.py:138`.
-- List: `GET {base}/api/v1/executions/{project}/{domain}?limit={pageSize}&sort_by.key=created_at&sort_by.direction=DESCENDING[&token=…]`. Filter `.flytegen.*` workflows. Then, for each RUNNING row in the page, fetch `/api/v1/node_executions/{project}/{domain}/{name}` **in parallel** and compute `nodeProgress` (succeeded/total, sentinel nodes `start-node`/`end-node` excluded). A failed node fetch degrades that row's hint to null — it never fails the page.
+- List: `GET {base}/api/v1/executions/{project}/{domain}?limit=…&sort_by.key=created_at&sort_by.direction=DESCENDING[&token=…]`. Filter `.flytegen.*` workflows. **Page refill:** the CI filter runs after fetching, so a single admin page can return fewer than `pageSize` visible rows — keep following the admin token, page by page, until `pageSize` human runs are collected or the token is exhausted, then return the final consumed token as `nextCursor` (mirrors `_gather_runs` in `query.py:202-220`; behavior defended at `tests/unit/flyte/test_query.py:107-126`). Then, for each RUNNING row in the returned page, fetch `/api/v1/node_executions/{project}/{domain}/{name}` **in parallel** and compute `nodeProgress` (succeeded/total, sentinel nodes `start-node`/`end-node` excluded). A failed node fetch degrades that row's hint to null — it never fails the page.
 - Detail: `GET /api/v1/executions/{project}/{domain}/{name}` + node executions (+ task executions per node for task name and log URIs — mirrors the repo `status` command, `query.py:296`; works mid-run).
 - `consoleUrl`: `{base}/console/projects/{project}/domains/{domain}/executions/{name}`.
-- Timeouts 10s per request. Transport failures reject the RPC with a stable prefix (`Flyte unreachable: …`); 404 on detail rejects `Execution not found`.
+- Timeouts 10s per request. Transport failures reject the RPC with a stable prefix (`Flyte unreachable: …`). Not-found mapping mirrors the reference client (`admin_client.py:210-220`): HTTP 404 **or** a gRPC-gateway JSON body with `code === 5` rejects the detail RPC with `Execution not found`; any other JSON `{code, message}` body rejects with the verbatim message. Payload decode happens only after this mapping.
 - Durations parse from the wire's `"912.864954004s"` format to seconds server-side.
 
 - Projects: `GET {base}/api/v1/projects` → `[{id, domains}]`. Cached in memory for 5 minutes (the set rarely changes).
@@ -152,7 +152,7 @@ export const setProjectPreferenceRpc = defineRpc({
 
 ### Cluster usage (`flyte.cluster.usage`)
 
-- Kubernetes API, not flyteadmin: `GET /apis/metrics.k8s.io/v1beta1/nodes` (usage) + `GET /api/v1/nodes` (allocatable). The kubeconfig on the daemon host uses client-cert auth (no exec plugin — verified), so plain Node fetch with the cert from `~/.kube/config` works; no kubectl subprocess.
+- Kubernetes API, not flyteadmin: `GET /apis/metrics.k8s.io/v1beta1/nodes` (usage) + `GET /api/v1/nodes` (allocatable). The kubeconfig requires client-cert mTLS, and `fetch` `RequestInit` has no cert/key options — use `node:https` with an `https.Agent` carrying the resolved `cert`, `key`, and `ca` (or an Undici `Agent` dispatcher; either way it is explicit in the code, not "plain fetch"). Kubeconfig resolution: read `current-context`, map to its cluster (`server`, `certificate-authority-data` base64 or `certificate-authority` file path) and user (`client-certificate-data`/`client-key-data` base64, or `client-certificate`/`client-key` file paths — both forms handled). No kubectl subprocess.
 - Rack mapping is convention, not cluster data — no rack labels exist in Kubernetes. `big*`/`bigbig*`/`biggpu` → Rack 1; `mid*` → Rack 2. `cupk8` and `minio*` are excluded (infra, not run-scheduling compute). Node renames break the mapping silently — the name-prefix table lives in one constant.
 - Percentages are usage over allocatable, aggregated per rack — not node-percentage averages. Cores render exact; RAM rounds to 10Gi.
 - Refresh: every 15s, matched to metrics-server's `--metric-resolution=15s` (verified in the deployment args) — faster polls return identical data. The runs list keeps its 30s poll. Both stop when the screen closes.
@@ -171,28 +171,35 @@ Information hierarchy:
 
 Phase mapping (single client function; tokens from `theme.colors`):
 
-| Flyte phase            | Dot / pill                           | Label              |
-| ---------------------- | ------------------------------------ | ------------------ |
-| `SUCCEEDED`            | `statusDotSuccess` / `statusSuccess` | Succeeded          |
-| `RUNNING`              | `statusDotRunning` (pulses)          | Running            |
-| `ABORTED` / `ABORTING` | `statusDotWarning` / `statusWarning` | Aborted / Aborting |
-| `FAILED` / `TIMED_OUT` | `statusDotDanger` / `statusDanger`   | Failed / Timed out |
+| Flyte phase                        | Dot / pill                           | Label                        |
+| ---------------------------------- | ------------------------------------ | ---------------------------- |
+| `SUCCEEDED`                        | `statusDotSuccess` / `statusSuccess` | Succeeded                    |
+| `SUCCEEDING`                       | `statusDotSuccess` / `statusSuccess` | Succeeding                   |
+| `RUNNING`                          | `statusDotRunning` (pulses)          | Running                      |
+| `ABORTED` / `ABORTING`             | `statusDotWarning` / `statusWarning` | Aborted / Aborting           |
+| `FAILED` / `FAILING` / `TIMED_OUT` | `statusDotDanger` / `statusDanger`   | Failed / Failing / Timed out |
+| `QUEUED` / `UNDEFINED`             | muted dot                            | Queued / Undefined           |
+| any other value                    | muted dot                            | verbatim phase               |
 
-Node `DYNAMIC_RUNNING` renders as running.
-
-Domain labeling rule (from `~/.claude/skills/ercot-run-monitoring/SKILL.md`): these phases are the **Flyte** `run_status` only. Nothing in the UI claims overall completion. The detail renders **"Spark health: Unavailable"** — Spark lives behind a rotating port-forward and is out of scope; the skill forbids fabricating an unavailable metric. No green "done" state exists in v1.
+Node phases reuse the same table, plus `DYNAMIC_RUNNING` → running, `SKIPPED` → muted "Skipped", `RETRY` → warning "Retrying", `RECOVERED` → success "Recovered". The catch-all row is deliberate: Flyte can add phases, and an unknown value must still render its verbatim name rather than lose status. Full enums: `flyteidl/core/execution.proto:12-38`.
 
 Live behavior:
 
 - Polling: 30s `refetchInterval` while the screen is open (each tick = 1 list GET + 1 node GET per running execution — 9 extra during the busy moment, trivial for flyteadmin).
 - Pull-to-refresh on compact (`RefreshControl` — react-native is a host external). Desktop relies on the 30s poll.
 - Elapsed ticks client-side at 1s from `startedAt` (only while running rows are rendered) — `duration` is null mid-run.
-- Loading: first page → centered spinner, chips render as empty shells (no layout shift). Error: one bordered alert "Unable to reach Flyte" + Retry; react-query keeps last good data. No standing empty state — recent-N is never empty after first load.
 - "Load more" ghost footer appends pages.
+- Loading: first page → centered spinner, chips render as empty shells (no layout shift). Error: one bordered alert "Unable to reach Flyte" + Retry; react-query keeps last good data. Empty state: a successful load with zero visible rows (a project with no runs — `sandbox` today — or a page where every row is CI) renders the centered muted noun "No Flyte runs yet" (`docs/design.md` empty-state norm). Transport failures stay in the alert path; the empty state is success-only.
 
 Platform constraints honored: host-provided externals only (react, react-native, @tanstack/react-query, zod); no react-native-svg — the progress bar is nested Views; all colors from `theme.colors.*`; `layout.compact` drives the single responsive branch; works light/dark, desktop/mobile.
 
-## Prerequisite (user decision, not taken)
+## Prerequisites
+
+### Host change: extend PluginTheme
+
+The spec's dots, list column, and chip/track surfaces need tokens the plugin theme DTO does not currently expose. `PluginTheme` carries only `surface0`–`surface2`, `border`, `foreground`, `foregroundMuted`, `accent`, `accentForeground`, `statusSuccess`, `statusWarning`, `statusDanger` (`packages/plugin/src/contracts.ts:7-21`; projection `packages/app/src/plugins/theme.ts:4-19`). Before the plugin build, extend the DTO and projection with: `statusDotSuccess`, `statusDotDanger`, `statusDotWarning`, `statusDotRunning`, `surface3`, `surfaceSidebar`. Rationale: status dots are deliberately their own chroma band (`docs/design.md` §13) — substituting the `status*` family would make dots read dimmer than the metadata beside them; `statusDotRunning` is the only running-state signal token anywhere in the theme; the list column and chip/track shells use `surfaceSidebar`/`surface3` in every canonical surface. This is a small host change to the fork (~6 mapped fields), not a plugin-side workaround — hardcoded hexes are forbidden.
+
+### User decision (not taken)
 
 Plugins are disabled on the production daemon (`~/.paseo/config.json` has no `pluginsEnabled`). Enabling is runtime-safe (`paseo reload`, no daemon restart — port 6767 stays up). Plugin code is trusted and unsandboxed: the server half runs with the user's credentials on the dev box; the client half runs inside the Paseo app. Do not enable on the user's behalf. The cluster usage section additionally reads the kubeconfig client cert — the plugin server holds cluster read credentials while it runs.
 
