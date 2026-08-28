@@ -22,7 +22,7 @@ Sub-decisions:
 - **Pagination**: first page 25, "Load more" appends 25 per press (react-query `useInfiniteQuery`, admin `token` param).
 - **CI filter**: executions on workflows starting `.flytegen.` (the `ledger-*` "verify and land" automation, no labels) are filtered out in the plugin server. The panel shows human-launched runs.
 - **Label filtering**: none in v1. Labels render as data. (Admin cannot filter by label server-side — `query.py:207` filters client-side; same constraint applies to us.)
-- **Project switcher**: the header's muted `project · domain` text is a Pressable with a small ChevronDown `Icon`; tapping expands a transient inline list (hand-built View/Text — plugins get no DropdownMenu primitive). The cluster exposes three projects today (`ercot-power-flow-poc`, `market-ercot`, `sandbox`, all domain `experiments`, via `GET /api/v1/projects`). Selecting one re-keys the runs queries; the selection is sticky — the plugin server records the last viewed project in a small JSON state file, so the next open starts there from any client device (there is no plugin storage API, and browser storage is per-device web-only — `public-docs/plugins/reference.md:86`). Domain stays fixed at the env default; all three projects have only `experiments`.
+- **Project switcher**: a compact toolbar row at the top of the plugin body (below the host header — the plugin owns only the body, `public-docs/plugins/reference.md:167`), showing the muted active `project · domain` text with a small ChevronDown `Icon` as a Pressable; tapping expands a transient inline list (hand-built View/Text — plugins get no DropdownMenu primitive). The cluster exposes three projects today (`ercot-power-flow-poc`, `market-ercot`, `sandbox`, all domain `experiments`, via `GET /api/v1/projects`). Selecting one re-keys the runs queries; the selection is sticky — the plugin server records the last viewed project in a small JSON state file, so the next open starts there from any client device (there is no plugin storage API, and browser storage is per-device web-only — `public-docs/plugins/reference.md:86`). Domain stays fixed at the env default; all three projects have only `experiments`.
 
 Real-data facts the design depends on (pulled 2026-08-28):
 
@@ -126,7 +126,8 @@ export const listProjectsRpc = defineRpc({
         domains: z.array(z.string()),
       }),
     ),
-    lastProject: z.string().nullable(), // sticky preference; null = never switched
+    activeProject: z.string(), // fully resolved: lastProject → env → default; what the trigger shows and queries key on
+    domain: z.string(), // fixed env domain, returned so the client never guesses
   }),
 });
 
@@ -137,18 +138,18 @@ export const setProjectPreferenceRpc = defineRpc({
 });
 ```
 
-## Server behavior (`*.server.ts`, plain Node fetch — no Python, no subprocess)
+## Server behavior (`*.server.ts` — Node HTTP only; no Python, no subprocess; flyteadmin over plain HTTP, Kubernetes over mTLS `node:https`)
 
 - Config: `FLYTE_ADMIN_URL` (default `http://flyte.cluster.zge`), `FLYTE_PROJECT` (default `ercot-power-flow-poc`), `FLYTE_DOMAIN` (default `experiments`) — mirrors `resolve_admin_url` in `admin_client.py:138`.
-- List: `GET {base}/api/v1/executions/{project}/{domain}?limit=…&sort_by.key=created_at&sort_by.direction=DESCENDING[&token=…]`. Filter `.flytegen.*` workflows. **Page refill:** the CI filter runs after fetching, so a single admin page can return fewer than `pageSize` visible rows — keep following the admin token, page by page, until `pageSize` human runs are collected or the token is exhausted, then return the final consumed token as `nextCursor` (mirrors `_gather_runs` in `query.py:202-220`; behavior defended at `tests/unit/flyte/test_query.py:107-126`). Then, for each RUNNING row in the returned page, fetch `/api/v1/node_executions/{project}/{domain}/{name}` **in parallel** and compute `nodeProgress` (succeeded/total, sentinel nodes `start-node`/`end-node` excluded). A failed node fetch degrades that row's hint to null — it never fails the page.
+- List: `GET {base}/api/v1/executions/{project}/{domain}?limit=…&sort_by.key=created_at&sort_by.direction=DESCENDING[&token=…]`. Filter `.flytegen.*` workflows. **Page refill without loss:** request each admin page with `limit = pageSize - visibleRowsCollected` (never a fixed admin page size). Because admin tokens are opaque and cannot split a page, a fixed-size page that overshoots `pageSize` would strand the surplus rows — dynamic limits make overshoot impossible: each page returns at most the remaining count, filtering only shrinks it, and the loop continues until `pageSize` visible rows are collected or the token is exhausted. Return the final consumed token as `nextCursor`. Then, for each RUNNING row in the returned page, fetch `/api/v1/node_executions/{project}/{domain}/{name}` **in parallel** and compute `nodeProgress` (succeeded/total, sentinel nodes `start-node`/`end-node` excluded). A failed node fetch degrades that row's hint to null — it never fails the page.
 - Detail: `GET /api/v1/executions/{project}/{domain}/{name}` + node executions (+ task executions per node for task name and log URIs — mirrors the repo `status` command, `query.py:296`; works mid-run).
 - `consoleUrl`: `{base}/console/projects/{project}/domains/{domain}/executions/{name}`.
 - Timeouts 10s per request. Transport failures reject the RPC with a stable prefix (`Flyte unreachable: …`). Not-found mapping mirrors the reference client (`admin_client.py:210-220`): HTTP 404 **or** a gRPC-gateway JSON body with `code === 5` rejects the detail RPC with `Execution not found`; any other JSON `{code, message}` body rejects with the verbatim message. Payload decode happens only after this mapping.
 - Durations parse from the wire's `"912.864954004s"` format to seconds server-side.
 
-- Projects: `GET {base}/api/v1/projects` → `[{id, domains}]`. Cached in memory for 5 minutes (the set rarely changes).
+- Projects: `GET {base}/api/v1/projects` returns `{projects: [...], token}` where each entry's `domains` is an array of objects (`{id, name}`). Normalize before RPC validation: take `body.projects`, map `domains.map((d) => d.id)`. Cached in memory for 5 minutes (the set rarely changes).
 - Sticky preference: a single JSON state file, `$PASEO_HOME/flyte-runs-state.json` when `PASEO_HOME` is set, else `~/.paseo/flyte-runs-state.json` — `{ lastProject: string | null }`. Read at startup and on `flyte.projects.list`; written by `flyte.preferences.setProject` (atomic write, best-effort — a failed write degrades to in-memory stickiness and never blocks the UI). Machine-local filesystem work in `*.server.ts` is the sanctioned pattern; there is no plugin storage API (`public-docs/plugins/reference.md:86`). The preference is daemon-wide (single-user), not per-device.
-- RPC `project` input fields: when omitted, resolve as sticky `lastProject` → `FLYTE_PROJECT` env default → `ercot-power-flow-poc`. The cluster card ignores project — racks are cluster-scoped.
+- RPC `project` input fields: when omitted, resolve as sticky `lastProject` → `FLYTE_PROJECT` env default → `ercot-power-flow-poc`. The resolution result is returned to the client as `activeProject` (plus the fixed `domain`) from `flyte.projects.list`, so the trigger text and query keys never guess. The cluster card ignores project — racks are cluster-scoped.
 
 ### Cluster usage (`flyte.cluster.usage`)
 
@@ -166,8 +167,7 @@ Information hierarchy:
 - Row (two lines): status dot · execution name (single line, tail ellipsis) · meta `HH:MM · workflow · size · authorized_by [· pr N]` · trailing duration (terminal) or live elapsed + `succeeded/total` hint (running, e.g. `8h 32m · 5/6`) · chevron (desktop). All times render in the device's local timezone (user choice; the mockups show UTC).
 - Date window and full labels live behind the tap in the detail — they don't fit a phone row and the name prefix usually encodes them.
 - Summary chips under the screen title: `N running · N succeeded today · N aborted` (computed from loaded pages; "today" = device-local midnight). During the busy moment this collapses to `9 running`.
-- Day sections (Today / Yesterday / date) in device-local time.
-- Detail: emphasized elapsed or final duration, node progress bar (running only), overview card (date window, size, workflow), labels card, nodes card — two-line node rows (id, phase, duration; task name on a muted second line as its final dot-segment), "Open in console" outline button + URL.
+- Detail: emphasized elapsed or final duration, node progress bar (running only), overview card (date window, size, workflow), labels card, nodes card — two-line node rows (id, phase, duration; task name on a muted second line as its final dot-segment) with a trailing small "Logs" link per node when log URIs exist (opens the first URI in the browser — the fetched value is never silently dropped), "Open in console" outline button + URL.
 
 Phase mapping (single client function; tokens from `theme.colors`):
 
@@ -181,7 +181,7 @@ Phase mapping (single client function; tokens from `theme.colors`):
 | `QUEUED` / `UNDEFINED`             | muted dot                            | Queued / Undefined           |
 | any other value                    | muted dot                            | verbatim phase               |
 
-Node phases reuse the same table, plus `DYNAMIC_RUNNING` → running, `SKIPPED` → muted "Skipped", `RETRY` → warning "Retrying", `RECOVERED` → success "Recovered". The catch-all row is deliberate: Flyte can add phases, and an unknown value must still render its verbatim name rather than lose status. Full enums: `flyteidl/core/execution.proto:12-38`.
+Node phases reuse the same table, plus `DYNAMIC_RUNNING` → running, `SKIPPED` → muted "Skipped", `RECOVERED` → success "Recovered" (canonical `NodeExecution.Phase` has no `RETRY`). The catch-all row is deliberate: Flyte can add phases, and an unknown value must still render its verbatim name rather than lose status. Full enums: `flyteidl/core/execution.proto:12-38`.
 
 Live behavior:
 
@@ -189,7 +189,7 @@ Live behavior:
 - Pull-to-refresh on compact (`RefreshControl` — react-native is a host external). Desktop relies on the 30s poll.
 - Elapsed ticks client-side at 1s from `startedAt` (only while running rows are rendered) — `duration` is null mid-run.
 - "Load more" ghost footer appends pages.
-- Loading: first page → centered spinner, chips render as empty shells (no layout shift). Error: one bordered alert "Unable to reach Flyte" + Retry; react-query keeps last good data. Empty state: a successful load with zero visible rows (a project with no runs — `sandbox` today — or a page where every row is CI) renders the centered muted noun "No Flyte runs yet" (`docs/design.md` empty-state norm). Transport failures stay in the alert path; the empty state is success-only.
+- Loading: first page → centered spinner, chips render as empty shells (no layout shift). Error: one bordered alert "Unable to reach Flyte" + Retry; react-query keeps last good data — the alert is the whole error surface, no state text below it. Empty state: a successful load where the refill loop ran to **token exhaustion** with zero visible rows (a project with no runs at all — `sandbox` today) renders the centered muted noun "No Flyte runs yet" (`docs/design.md` empty-state norm). A merely CI-heavy page never empties — refill keeps following tokens. Transport failures stay in the alert path; the empty state is success-only.
 
 Platform constraints honored: host-provided externals only (react, react-native, @tanstack/react-query, zod); no react-native-svg — the progress bar is nested Views; all colors from `theme.colors.*`; `layout.compact` drives the single responsive branch; works light/dark, desktop/mobile.
 
@@ -197,7 +197,11 @@ Platform constraints honored: host-provided externals only (react, react-native,
 
 ### Host change: extend PluginTheme
 
-The spec's dots, list column, and chip/track surfaces need tokens the plugin theme DTO does not currently expose. `PluginTheme` carries only `surface0`–`surface2`, `border`, `foreground`, `foregroundMuted`, `accent`, `accentForeground`, `statusSuccess`, `statusWarning`, `statusDanger` (`packages/plugin/src/contracts.ts:7-21`; projection `packages/app/src/plugins/theme.ts:4-19`). Before the plugin build, extend the DTO and projection with: `statusDotSuccess`, `statusDotDanger`, `statusDotWarning`, `statusDotRunning`, `surface3`, `surfaceSidebar`. Rationale: status dots are deliberately their own chroma band (`docs/design.md` §13) — substituting the `status*` family would make dots read dimmer than the metadata beside them; `statusDotRunning` is the only running-state signal token anywhere in the theme; the list column and chip/track shells use `surfaceSidebar`/`surface3` in every canonical surface. This is a small host change to the fork (~6 mapped fields), not a plugin-side workaround — hardcoded hexes are forbidden.
+The spec's dots, list column, chip/track surfaces, and the outline button need tokens the plugin theme DTO does not currently expose. `PluginTheme` carries only `surface0`–`surface2`, `border`, `foreground`, `foregroundMuted`, `accent`, `accentForeground`, `statusSuccess`, `statusWarning`, `statusDanger` (`packages/plugin/src/contracts.ts:7-21`; projection `packages/app/src/plugins/theme.ts:4-19`). Before the plugin build, extend the DTO and projection with: `statusDotSuccess`, `statusDotDanger`, `statusDotWarning`, `statusDotRunning`, `surface3`, `surfaceSidebar`, `borderAccent`. Rationale: status dots are deliberately their own chroma band (`docs/design.md` §13) — substituting the `status*` family would make dots read dimmer than the metadata beside them; `statusDotRunning` is the only running-state signal token anywhere in the theme; the list column and chip/track shells use `surfaceSidebar`/`surface3` in every canonical surface; `borderAccent` is the design contract's outline-button border (`docs/design.md` §5). This is a small host change to the fork (~7 mapped fields), not a plugin-side workaround — hardcoded hexes are forbidden.
+
+### Host change: route Command Center opens through the sidebar contribution
+
+Command Center `openSurface("main")` routes with identity kind `surface` (`packages/app/src/plugins/command-center/contributions.ts:39-45`, `registration.tsx:68-71`), and `PluginSurfaceScreen` falls back to `surface.id` for direct surfaces (`surface-contribution.ts:15-23`, `surface-screen.tsx:175`) — the host title would render as `main`, not `Flyte runs`. Before shipping the Command Center item, make `openSurface` prefer the plugin's `sidebarItem` targeting the same surface when one exists (route with that identity, preserving the item's title and icon). The sidebar entry point is unaffected; this only fixes the Command Center path.
 
 ### User decision (not taken)
 
