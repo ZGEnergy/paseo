@@ -10,6 +10,7 @@ import type {
 } from "./agent.js";
 import { createOmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
+import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 
@@ -31,6 +32,13 @@ afterEach(() => {
   const violations = manualIdleSchedulers.flatMap((scheduler) => scheduler.violations());
   manualIdleSchedulers.length = 0;
   expect(violations).toEqual([]);
+});
+
+test("OMP RPC timeout defaults to 60 seconds and accepts an override", () => {
+  expect(resolveOmpProviderParams({}).runtimeProviderParams.rpcTimeoutMs).toBe(60_000);
+  expect(
+    resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams.rpcTimeoutMs,
+  ).toBe(90_000);
 });
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
