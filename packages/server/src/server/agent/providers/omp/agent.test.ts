@@ -34,11 +34,15 @@ afterEach(() => {
   expect(violations).toEqual([]);
 });
 
-test("OMP RPC timeout defaults to 60 seconds and accepts an override", () => {
-  expect(resolveOmpProviderParams({}).runtimeProviderParams.rpcTimeoutMs).toBe(60_000);
-  expect(
-    resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams.rpcTimeoutMs,
-  ).toBe(90_000);
+test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
+  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 20_000,
+    rpcTimeoutMs: 60_000,
+  });
+  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 90_000,
+    rpcTimeoutMs: 90_000,
+  });
 });
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
