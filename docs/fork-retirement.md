@@ -1,12 +1,12 @@
 # Fork retirement
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `d056d47cccc5e56cac445c4ba7722ca1147d4a2e`
-- fork upstream mirror: `origin/main` at `8dd4da6ee0151028b195afbdd998556188e43334`
-- upstream: `getpaseo/paseo` `main` at `8dd4da6ee0151028b195afbdd998556188e43334`
+- fork integration: `origin/internal/main` at `e1e99dfe3975b085a1a99b9b34dbc91a82ba07db`
+- fork upstream mirror: `origin/main` at `92442e743517cb4f1c304967bd79e2b9401a6ba6`
+- upstream: `getpaseo/paseo` `main` at `140b0bb716205cf0e00c0ff5b6b3c20af6c79413`
 
 ## Active capability count
 
@@ -16,7 +16,7 @@ Evidence baseline:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 Observable behavior:
 
@@ -42,7 +42,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 Observable behavior:
 
@@ -68,7 +68,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 Observable behavior:
 
@@ -91,7 +91,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-04
 
 Observable behavior:
 
