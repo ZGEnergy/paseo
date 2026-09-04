@@ -135,8 +135,12 @@ for (const w of warnings) {
 const expanded = new Set(fileList);
 for (const pattern of additionalInputs) {
   if (pattern.includes("*")) {
-    for await (const file of glob(pattern, { cwd: REPO_ROOT })) {
-      expanded.add(file);
+    // A directory entry makes the install phase's `cp -a` copy a tree into itself
+    // once its destination exists. Dropping them is safe: the loop mkdir -p's
+    // every parent. Symlinks are kept, so this tests isDirectory, not isFile.
+    for await (const entry of glob(pattern, { cwd: REPO_ROOT, withFileTypes: true })) {
+      if (entry.isDirectory()) continue;
+      expanded.add(path.relative(REPO_ROOT, path.join(entry.parentPath, entry.name)));
     }
   } else {
     expanded.add(pattern);
