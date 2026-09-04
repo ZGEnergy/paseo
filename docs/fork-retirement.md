@@ -4,8 +4,8 @@ Last reviewed: 2026-09-03
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `2ac65e65f3879582f19aaf5aeccd69e2c9df4eb9`
-- fork upstream mirror: `origin/main` at `eb753813a198958dcf75a08d65b71b77c60ffdd7`
+- fork integration: `origin/internal/main` at `75d62bc4ee4fb592ec8b3a67e123a8ddb0f12095`
+- fork upstream mirror: `origin/main` at `92442e743517cb4f1c304967bd79e2b9401a6ba6`
 - upstream: `getpaseo/paseo` `main` at `92442e743517cb4f1c304967bd79e2b9401a6ba6`
 
 ## Active capability count
