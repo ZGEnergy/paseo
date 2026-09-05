@@ -10541,7 +10541,7 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
     });
 
     const resultPromise = manager.listImportableSessions();
-    await vi.advanceTimersByTimeAsync(8_000);
+    await vi.advanceTimersByTimeAsync(90_000);
 
     await expect(resultPromise).resolves.toEqual({
       sessions: [
@@ -10559,7 +10559,7 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
         { provider: "codex", message: "codex listing failed" },
         {
           provider: "pi",
-          message: "Timed out listing importable sessions for provider 'pi' after 8000ms",
+          message: "Timed out listing importable sessions for provider 'pi' after 90000ms",
         },
       ],
     });
