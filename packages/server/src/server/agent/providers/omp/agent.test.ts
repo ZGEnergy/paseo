@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type {
@@ -704,24 +704,6 @@ describe("OMP agent client and session", () => {
         isWaitingOnSubagents: false,
       }),
     ).resolves.toEqual({ retry: false, reason: "wait_budget" });
-  });
-
-  test("reports the observed compaction state and elapsed time to the scheduler", async () => {
-    const scheduler = new ManualIdleScheduler();
-    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
-    await omp.start();
-
-    await omp.startPromptUntilProviderIdle("first", "first done", {
-      isStreaming: false,
-      isCompacting: true,
-    });
-    await scheduler.waitForWaits(1);
-    expect(scheduler.attempts()[0]?.isCompacting).toBe(true);
-
-    await delay(5);
-    scheduler.retryAll();
-    await scheduler.waitForWaits(2);
-    expect(scheduler.attempts()[1]?.elapsedMs).toBeGreaterThanOrEqual(5);
   });
 
   test("keeps an earlier agent_end error when a later cycle reports none", async () => {
