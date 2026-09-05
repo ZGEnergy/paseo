@@ -1,22 +1,22 @@
 # Fork retirement
 
-Last reviewed: 2026-09-04
-
-Evidence baseline:
-
-- fork integration: `origin/internal/main` at `e1e99dfe3975b085a1a99b9b34dbc91a82ba07db`
-- fork upstream mirror: `origin/main` at `92442e743517cb4f1c304967bd79e2b9401a6ba6`
-- upstream: `getpaseo/paseo` `main` at `140b0bb716205cf0e00c0ff5b6b3c20af6c79413`
-
 ## Active capability count
 
 **4 waiting.** No capability is `upstream-candidate`: each named upstream pull request remains absent from upstream `main`. No capability is retired.
+
+Last reviewed: 2026-09-05
+
+Evidence baseline:
+
+- fork integration: `origin/internal/main` at `9bcea065485068325638b85e8552c60e168bb77a`
+- fork upstream mirror: `origin/main` at `78b285059f6ebd0b257c98bd191df4626721270a`
+- upstream: `getpaseo/paseo` `main` at `78b285059f6ebd0b257c98bd191df4626721270a`
 
 ## LaTeX assistant-message rendering
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 Observable behavior:
 
@@ -42,7 +42,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 Observable behavior:
 
@@ -68,7 +68,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 Observable behavior:
 
@@ -91,7 +91,7 @@ Upstream evidence:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-04
+Last reviewed: 2026-09-05
 
 Observable behavior:
 
