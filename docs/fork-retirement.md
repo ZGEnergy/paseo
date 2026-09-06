@@ -2,15 +2,15 @@
 
 ## Active capability count
 
-**4 waiting.** No capability is `upstream-candidate`: each named upstream pull request remains absent from upstream `main` at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`. No capability is retired.
+**4 waiting.** No capability is `upstream-candidate`: each named upstream pull request remains absent from upstream `main` at `38c22139bb191f0ad27b11c16776e93504ddd4fd`. No capability is retired.
 
 Last reviewed: 2026-09-06
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `1346a2518835ad7a93c9e351cb52ed015f2a48c5`
-- fork upstream mirror: `origin/main` at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`
-- upstream: `getpaseo/paseo` `main` at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`
+- fork integration: `origin/internal/main` at `2c30963879f6aeea1405e6c30ba67cca28e58a4c`
+- fork upstream mirror: `origin/main` at `38c22139bb191f0ad27b11c16776e93504ddd4fd`
+- upstream: `getpaseo/paseo` `main` at `38c22139bb191f0ad27b11c16776e93504ddd4fd`
 
 ## LaTeX assistant-message rendering
 
@@ -36,7 +36,7 @@ Upstream evidence:
 
 - [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562), inspected head `e784d3b91a63add5a8fa3889e282d35da86e7c78`, remains open and supplies the base parser/rendering candidate.
 - [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1), inspected head `51505218784075ceb73d59408ee78305c02ca1b0`, remains open and supplies the inherited-color candidate.
-- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`.
+- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `38c22139bb191f0ad27b11c16776e93504ddd4fd`.
 
 ## OMP task and subagent lifecycle correctness
 
@@ -62,7 +62,7 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, remains open. It supplies an earlier child-polling baseline but not the fork's bounded completion, verified incremental-yield settlement, or interruption-safe child behavior.
-- Upstream `main` still completes from provider state alone with an unbounded retry loop and terminalizes running children on interruption at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`.
+- Upstream `main` still completes from provider state alone with an unbounded retry loop and terminalizes running children on interruption at `38c22139bb191f0ad27b11c16776e93504ddd4fd`.
 
 ## OMP Ask option descriptions
 
@@ -85,7 +85,7 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3628](https://github.com/getpaseo/paseo/pull/3628), inspected head `b1f831e5dc4b148a44135f0b44c3b7afe7c8411c`, remains open and carries the description candidate.
-- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`.
+- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `38c22139bb191f0ad27b11c16776e93504ddd4fd`.
 
 ## Claude background and autonomous subagent lifecycle correctness
 
@@ -109,7 +109,7 @@ Upstream evidence:
 
 - [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, remains open and carries the background-child prompt candidate.
 - Upstream commits `403a32ad9f38933e5a8f38fe77f9aa787e9d39c8` and `f9e1def954550ec50c45ffa435f5fe1d57fc48f3` cover explicit autonomous steering and stale interrupt-window frames. They do not replace ordinary follow-up admission or completed task-notification settlement.
-- No dedicated upstream pull request or equivalent `main` implementation covers leftover task-protocol settlement at `e4cd2d1ad08a452e75c3ea316cf4c41d15fe8f60`.
+- No dedicated upstream pull request or equivalent `main` implementation covers leftover task-protocol settlement at `38c22139bb191f0ad27b11c16776e93504ddd4fd`.
 
 ## Retired history
 
