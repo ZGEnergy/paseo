@@ -2,21 +2,22 @@
 
 ## Active capability count
 
-**4 waiting.** No capability is `upstream-candidate`: each named upstream pull request remains absent from upstream `main` at `c424f82922fcd36aa9cc9e473644bca04417b420`. No capability is retired.
+**4 waiting.** No capability is `upstream-candidate`: live upstream `main` at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4` does not provide every required behavior for any capability. No capability is retired.
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `a63602d74dc3bfc4ed811933d055caa9963837d0`
-- fork upstream mirror: `origin/main` at `b403dea32beaed5e1f9a08db52b88d12579c6dd2`
-- upstream: `getpaseo/paseo` `main` at `c424f82922fcd36aa9cc9e473644bca04417b420`
+- fork integration: `origin/internal/main` at `5e9a98458546757d5ceebc6395f2a32b1af79fd0`
+- fork upstream mirror: `origin/main` at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`
+- upstream: `getpaseo/paseo` `main` at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`
+- review-period fork merges [#89](https://github.com/ZGEnergy/paseo/pull/89), [#90](https://github.com/ZGEnergy/paseo/pull/90), and [#91](https://github.com/ZGEnergy/paseo/pull/91) only synchronized upstream; no new downstream product capability landed
 
 ## LaTeX assistant-message rendering
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 Observable behavior:
 
@@ -34,15 +35,15 @@ Fork evidence:
 
 Upstream evidence:
 
-- [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562), inspected head `e784d3b91a63add5a8fa3889e282d35da86e7c78`, remains open and supplies the base parser/rendering candidate.
-- [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1), inspected head `51505218784075ceb73d59408ee78305c02ca1b0`, remains open and supplies the inherited-color candidate.
-- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `c424f82922fcd36aa9cc9e473644bca04417b420`.
+- [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562), inspected head `e784d3b91a63add5a8fa3889e282d35da86e7c78`, closed unmerged in favor of a timeline-plugin approach that does not provide built-in assistant-message rendering.
+- [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1), inspected head `51505218784075ceb73d59408ee78305c02ca1b0`, remains open atop the closed rendering candidate and supplies inherited-color handling.
+- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`.
 
 ## OMP task and subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 Observable behavior:
 
@@ -61,14 +62,14 @@ Fork evidence:
 
 Upstream evidence:
 
-- [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, remains open. It supplies an earlier child-polling baseline but not the fork's bounded completion, verified incremental-yield settlement, or interruption-safe child behavior.
-- Upstream `main` still completes from provider state alone with an unbounded retry loop and terminalizes running children on interruption at `c424f82922fcd36aa9cc9e473644bca04417b420`.
+- [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, closed unmerged in favor of [#2777](https://github.com/getpaseo/paseo/pull/2777). That merged change aggregates native-child activity into workspace status while explicitly leaving parent lifecycle unchanged; it does not add bounded completion, yield settlement, or interruption-safe children.
+- Upstream `main` still completes from provider state alone with an unbounded retry loop and terminalizes running children on interruption at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`.
 
 ## OMP Ask option descriptions
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 Observable behavior:
 
@@ -85,13 +86,13 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3628](https://github.com/getpaseo/paseo/pull/3628), inspected head `b1f831e5dc4b148a44135f0b44c3b7afe7c8411c`, remains open and carries the description candidate.
-- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `c424f82922fcd36aa9cc9e473644bca04417b420`.
+- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`.
 
 ## Claude background and autonomous subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-07
+Last reviewed: 2026-09-08
 
 Observable behavior:
 
@@ -107,9 +108,9 @@ Fork evidence:
 
 Upstream evidence:
 
-- [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, remains open and carries the background-child prompt candidate.
-- Upstream commits `403a32ad9f38933e5a8f38fe77f9aa787e9d39c8` and `f9e1def954550ec50c45ffa435f5fe1d57fc48f3` cover explicit autonomous steering and stale interrupt-window frames. They do not replace ordinary follow-up admission or completed task-notification settlement.
-- No dedicated upstream pull request or equivalent `main` implementation covers leftover task-protocol settlement at `c424f82922fcd36aa9cc9e473644bca04417b420`.
+- [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, closed unmerged in favor of [#3394](https://github.com/getpaseo/paseo/pull/3394), merge `42245d139ad1f3ba93c3e691e9e0a7971169ea79`.
+- Upstream active-turn steering and commit `f9e1def954550ec50c45ffa435f5fe1d57fc48f3` cover explicit steering and stale interrupt-window frames. They do not replace default follow-up admission during an autonomous turn or completed task-notification settlement.
+- No dedicated upstream pull request or equivalent `main` implementation covers leftover task-protocol settlement at `18aaec2772a5bd3d5ef1384022e5fa8d7650d5e4`.
 
 ## Retired history
 
