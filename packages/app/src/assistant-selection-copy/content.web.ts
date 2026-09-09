@@ -11,6 +11,7 @@ import {
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+  MARKDOWN_COPY_SOURCE_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
@@ -54,6 +55,12 @@ turndown.addRule("compactListItem", {
     const index = Array.from(parent.children).indexOf(node);
     return `${start + index}. ${item}\n`;
   },
+});
+turndown.addRule("declaredMarkdownSource", {
+  // Non-text content such as a rendered formula declares the markdown it copies as.
+  filter: (node) => node.hasAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE),
+  replacement: (_content, node) =>
+    (node as HTMLElement).getAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE) ?? "",
 });
 
 export function createAssistantSelectionClipboardContent(
@@ -388,9 +395,10 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   if (fragment.textContent) {
     return true;
   }
-  const visibleVoidSelector = ["br", "hr"]
-    .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
-    .join(",");
+  const visibleVoidSelector = [
+    ...["br", "hr"].map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`),
+    `[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`,
+  ].join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }
 
