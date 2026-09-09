@@ -6,15 +6,15 @@ Let a client plugin extend how Paseo parses, splits, and renders assistant markd
 one vector-drawing primitive, so LaTeX rendering ships as a plugin that runs inside upstream's
 published iOS and Android apps. Develop and verify on this fork first, with the fork as the SDK's
 first consumer, then propose the same commits upstream. The upstream PR is two additive SDK
-capabilities, about 140 lines of host and SDK code across two commits, and a reference plugin
+capabilities, about 200 lines of host and SDK code across two commits, and a reference plugin
 that is this fork's existing math code moved.
 
 ## Scope
 
 In scope: `client.addMarkdownExtension` for assistant messages, block protection in the streaming
-splitter driven by extension-declared delimiters, and `SvgXml` exported from
+splitter driven by extension-declared delimiters, and `SvgXml` and `MarkdownSource` exported from
 `@getpaseo/plugin/client/react-native`. The reference plugin `plugin-examples/markdown-math`
-proves all three. The fork PR removes the built-in KaTeX patch and adopts the plugin.
+proves all of it. The fork PR removes the built-in KaTeX patch and adopts the plugin.
 
 Out of scope: user messages, reasoning rows, plan cards, and file previews keep their current
 parsers. No `Markdown` component is exported. No new host module specifier is added, so the
@@ -103,9 +103,12 @@ The splitter runs in two places outside React: the stream reducer that promotes 
 (`packages/app/src/types/stream.ts`, the `promotedItems` map) and the height estimator that web
 virtualization calls (`packages/app/src/utils/assistant-message-height-estimate.ts:3`). It also runs
 in `AssistantMessage` at `message.tsx:1953`. Neither reducer nor estimator can call a hook, so the
-splitter reads delimiters from `pluginRegistry.getSnapshot()` (`packages/app/src/plugins/registry.ts`)
-and flattens every installed plugin's `blockDelimiters`. A plugin that loads mid-stream does not
-re-split blocks already promoted; the next message is protected.
+delimiters are pushed rather than pulled: `PluginRegistry.publish()`
+(`packages/app/src/plugins/registry.ts:151`) flattens every installed plugin's `blockDelimiters`
+and calls the splitter's `setMarkdownBlockDelimiters`. The splitter file imports nothing from the
+plugin subsystem, and `splitMarkdownBlocks(text, options?)` accepts an explicit list so tests need
+no registry. A plugin that loads mid-stream does not re-split blocks already promoted; the next
+message is protected.
 
 Two changes to `split-markdown-blocks.ts`, as two commits:
 
@@ -126,17 +129,27 @@ deliberate.
 
 ### Host wiring
 
-| File                                              | Change                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/app/src/plugins/types.ts`               | `markdownExtensions: PluginMarkdownExtension[]` on `EvaluatedPlugin`.                                                                                                                                                                                                                                           |
-| `packages/app/src/plugins/evaluate.ts`            | Collector entry, `markdownExtensionIds` set, `addMarkdownExtension` mirroring `addTheme` at `:287`, and the return field.                                                                                                                                                                                       |
-| `packages/app/src/plugins/registry.ts`            | `markdownExtensions: []` in the empty-plugin default at `:93`.                                                                                                                                                                                                                                                  |
-| `packages/app/src/components/message.tsx`         | In `AssistantMessage`: read `useInstalledPlugins()`, memoize `flatMap((plugin) => plugin.markdownExtensions)` on the snapshot, fold `parser` into the existing parser `useMemo` at `:1503`, spread `rules` last in the existing rules `useMemo` and add the extensions array to its dependency list at `:1951`. |
-| `packages/app/src/utils/split-markdown-blocks.ts` | The two commits above.                                                                                                                                                                                                                                                                                          |
+| File                                                        | Change                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/app/src/plugins/types.ts`                         | `markdownExtensions: PluginMarkdownExtension[]` on `EvaluatedPlugin`.                                                                                                                                                                                                                                           |
+| `packages/app/src/plugins/evaluate.ts`                      | Collector entry, `markdownExtensionIds` set, `addMarkdownExtension` mirroring `addTheme` at `:287`, and the return field.                                                                                                                                                                                       |
+| `packages/app/src/plugins/registry.ts`                      | `markdownExtensions: []` in the empty-plugin default at `:93`; `publish()` at `:151` calls `setMarkdownBlockDelimiters`.                                                                                                                                                                                        |
+| `packages/app/src/components/message.tsx`                   | In `AssistantMessage`: read `useInstalledPlugins()`, memoize `flatMap((plugin) => plugin.markdownExtensions)` on the snapshot, fold `parser` into the existing parser `useMemo` at `:1503`, spread `rules` last in the existing rules `useMemo` and add the extensions array to its dependency list at `:1951`. |
+| `packages/app/src/utils/split-markdown-blocks.ts`           | The two commits above.                                                                                                                                                                                                                                                                                          |
+| `packages/app/src/plugins/markdown-extensions.ts`           | New. `collectMarkdownExtensions`, `collectMarkdownBlockDelimiters`, `applyMarkdownExtensionParsers`, `mergeMarkdownExtensionRules`.                                                                                                                                                                             |
+| `packages/app/src/plugins/react-native/runtime.ts`          | Provide `SvgXml` from `react-native-svg` and `MarkdownSource`.                                                                                                                                                                                                                                                  |
+| `packages/app/src/plugins/react-native/markdown-source.tsx` | New. `Text` or `View` carrying `dataSet={{ paseoMarkdownSource: source }}`.                                                                                                                                                                                                                                     |
+| `packages/app/src/assistant-selection-copy/markup.ts`       | `MARKDOWN_COPY_SOURCE_ATTRIBUTE` and its `dataSet` key.                                                                                                                                                                                                                                                         |
+| `packages/app/src/assistant-selection-copy/content.web.ts`  | One Turndown rule emitting the declared source verbatim; `hasMarkdownContent` counts it.                                                                                                                                                                                                                        |
 
 `useInstalledPlugins()` is a global `useSyncExternalStore` (`registry.ts:166`). Its snapshot is
 identity-stable between publishes, so the parser and rules memos rebuild only when a plugin
 loads or unloads. Streaming blocks pass through `MemoizedMarkdownBlock` unchanged.
+
+The composition itself is four pure functions in `packages/app/src/plugins/markdown-extensions.ts`:
+collect extensions and delimiters from installed plugins, apply parsers to a markdown-it instance,
+and merge rules after the built-ins. `AssistantMessage` calls them; the registry calls the
+delimiter one. They are unit-tested there because `AssistantMessage` has no render test harness.
 
 ### Compatibility
 
@@ -145,7 +158,7 @@ Additive. A client that predates this capability cannot evaluate a plugin that c
 naming the first release that ships it. This is the `addTheme` precedent. No
 `server_info.features` flag and no `COMPAT` tag: there is no shim to delete later.
 
-## Capability 2: `SvgXml`
+## Capability 2: `SvgXml` and `MarkdownSource`
 
 ### Contract
 
@@ -159,17 +172,31 @@ export declare const SvgXml: ComponentType<{
   height?: number | string;
   color?: string;
 }>;
+
+export interface MarkdownSourceProps {
+  /** The markdown this element copies as when a web selection includes it. */
+  source: string;
+  /** Render a block (`View`) instead of an inline run (`Text`). Default false. */
+  display?: boolean;
+  style?: StyleProp<ViewStyle | TextStyle>;
+  children: ReactNode;
+}
+
+/** Wraps non-text content so a web drag selection copies `source` verbatim. */
+export declare const MarkdownSource: ComponentType<MarkdownSourceProps>;
 ```
 
-Add to `packages/app/src/plugins/react-native/runtime.ts`:
+`SvgXml` is `react-native-svg`'s component re-exported through
+`packages/app/src/plugins/react-native/runtime.ts`. `MarkdownSource` is a new host component,
+`packages/app/src/plugins/react-native/markdown-source.tsx`: a `Text` for inline content or a
+`View` for `display`, carrying `dataSet={{ paseoMarkdownSource: source }}`, which react-native-web
+renders as `data-paseo-markdown-source` and native ignores. The web copy serializer
+(`packages/app/src/assistant-selection-copy/content.web.ts`) gains one Turndown rule that emits
+that attribute's value verbatim for any element carrying it, and `hasMarkdownContent` counts such
+an element as content so a formula-only selection still copies. The attribute name lives beside
+the other `data-paseo-markdown-*` constants in `assistant-selection-copy/markup.ts`.
 
-```ts
-import { SvgXml } from "react-native-svg";
-// ...
-export const pluginReactNativeRuntime = { /* existing */, SvgXml };
-```
-
-### Why one component and not the module
+### Why two components and not the module
 
 `@getpaseo/plugin/client/react-native` is already external in the compiler and already in the
 scaffold's devDependencies. Exporting `SvgXml` through it needs no change to
@@ -191,14 +218,14 @@ source only; see Tests for why.
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `client/markdown-math.ts` | `packages/app/src/utils/markdown-math.ts` moved whole. The app's copies of `findUnescapedDelimiter` and `isEscaped` move to the splitter; the plugin keeps its own, because plugin code cannot import from the app. Registers `math_inline` and `math_block` tokens for `$…$`, `\(…\)`, `$$…$$`, `\[…\]`, and ` ```math ` fences. |
 | `client/math-rules.tsx`   | `packages/app/src/components/markdown/math-rules.tsx`, with `MathFormula` imported locally.                                                                                                                                                                                                                                       |
-| `client/math-formula.tsx` | New. Bundles `mathjax-full`, calls `tex2svg`, renders `<SvgXml xml={svg} />`. Replaces both `math-formula.web.tsx` and `math-formula.native.tsx`; one renderer for four clients, and native typesets for the first time.                                                                                                          |
+| `client/math-formula.tsx` | New. Bundles `mathjax-full`, calls `tex2svg`, renders `<SvgXml xml={svg} />` inside `MarkdownSource`. Replaces both `math-formula.web.tsx` and `math-formula.native.tsx`; one renderer for four clients, and native typesets for the first time.                                                                                  |
 | `index.client.tsx`        | `client.addMarkdownExtension({ id: "math", parser: markdownMath, rules: mathMarkdownRules, blockDelimiters: [{ open: "$$", close: "$$" }, { open: "\\[", close: "\\]" }] })`.                                                                                                                                                     |
 
 Text color reaches the formula the same way it does today: math tokens are leaf nodes, so the
 renderer hands them the inherited text style as the fifth `RenderFunction` argument. The
-component reads `color` from it and passes it to `SvgXml`. Beside the `SvgXml` it renders a
-visually hidden, selectable `Text` containing `source`, clipped the way KaTeX hides its MathML,
-so a web drag selection copies the LaTeX. See Copy and selection.
+component reads `color` from it and passes it to `SvgXml`, and wraps the `SvgXml` in
+`MarkdownSource` with the formula's `source`, so a web drag selection copies the LaTeX. See Copy
+and selection.
 
 MathJax's SVG output embeds glyph outlines as `<path>` data, so there is no font or CSS to
 deliver. Bundle size after tree-shaking is measured during implementation and recorded in the
@@ -216,9 +243,22 @@ The turn copy button is the primary copy path and this design does not change it
 source survives verbatim on every client, independent of how the formula is drawn.
 
 Web drag selection improves. Today the fork renders KaTeX `htmlAndMathml` without `copy-tex`, so
-selecting `x^2+\frac{a}{b}` copies the visible text `x2+ba` plus the hidden MathML. An SVG of
-`<path>` glyphs contributes nothing to a selection, so the plugin's hidden source `Text` is what a
-selection copies: the LaTeX.
+selecting `x^2+\frac{a}{b}` copies the visible text `x2+ba` plus the hidden MathML.
+
+A hidden source `Text` would not fix it. Web copy is not the browser's text extraction:
+`AssistantSelectionCopySurface` intercepts `onCopy`, clones the selected DOM, and runs it through
+Turndown (`content.web.ts:23`), whose default escaping is not overridden. Any LaTeX that reaches it
+as a text node is mangled: `\frac` becomes `\\frac`, `x_1` becomes `x\_1`. Turndown also strips
+whitespace adjacent to block elements, so a formula wrapped in a `View` (a `div` on web) copies as
+`Energy is$E = mc^2$here`.
+
+`MarkdownSource` uses the serializer's own convention instead. The wrapper carries
+`data-paseo-markdown-source`, and one Turndown rule emits that value verbatim, bypassing escaping.
+Inline content renders as a nested `Text`, which react-native-web emits as a `span`, so the spaces
+around it survive; `display` content renders as a `View`, so it copies as its own paragraph. An SVG
+of `<path>` glyphs contributes nothing on its own; the declared source is what a selection copies.
+A selection that starts or ends inside the formula does not include the wrapper element and
+copies nothing for it.
 
 Native per-formula long-press copy is lost. React Native selection is per `Text`, and an SVG is not
 text. Today it works only because the formula is rendered as raw text. The turn copy button at
@@ -372,8 +412,8 @@ Run only the changed files: `npx vitest run <file> --bail=1`.
   `Contribute a theme` at `:926` with the contract, the ordering rule, `blockDelimiters`, and the
   old-client failure; `SvgXml` added to the Host UI list; the "do not import" sentence at `:140`
   unchanged.
-- `docs/plugins.md`: one row in the contribution table pointing at the reference section and the
-  example.
+- `docs/plugins.md`: a short `Contribute markdown extensions` section after the timeline items
+  section, pointing at the reference and the example. That file has no contribution table.
 - `docs/agent-stream-performance.md` owns the pipeline that names `markdown blocks` as a stage
   (`:15`). Add the protected-region rule under its `## Invariants` section rather than in a new doc:
   a block is never split inside an open fence or an open extension-declared pair, and an unclosed
@@ -384,20 +424,24 @@ Run only the changed files: `npx vitest run <file> --bail=1`.
 
 Host and SDK code only. Tests, docs, and the example are additional.
 
-| File                                                                                     | Commit | Lines    |
-| ---------------------------------------------------------------------------------------- | ------ | -------- |
-| `packages/app/src/utils/split-markdown-blocks.ts`, unclosed fence                        | 1      | ~30      |
-| `packages/app/src/utils/split-markdown-blocks.ts`, declared delimiters and registry read | 2      | ~50      |
-| `findUnescapedDelimiter` and `isEscaped`, moved into the splitter file                   | 2      | ~20      |
-| `packages/plugin/src/client/contracts.ts`                                                | 2      | ~12      |
-| `packages/plugin/src/client/react-native.ts`                                             | 2      | ~6       |
-| `packages/plugin/package.json`                                                           | 2      | ~4       |
-| `packages/app/src/plugins/react-native/runtime.ts`                                       | 2      | 2        |
-| `packages/app/src/plugins/types.ts`                                                      | 2      | 1        |
-| `packages/app/src/plugins/evaluate.ts`                                                   | 2      | ~9       |
-| `packages/app/src/plugins/registry.ts`                                                   | 2      | 1        |
-| `packages/app/src/components/message.tsx`                                                | 2      | ~6       |
-| **Total**                                                                                |        | **~141** |
+| File                                                                   | Commit | Lines    |
+| ---------------------------------------------------------------------- | ------ | -------- |
+| `packages/app/src/utils/split-markdown-blocks.ts`, unclosed fence      | 1      | ~30      |
+| `packages/app/src/utils/split-markdown-blocks.ts`, declared delimiters | 2      | ~50      |
+| `findUnescapedDelimiter` and `isEscaped`, moved into the splitter file | 2      | ~20      |
+| `packages/plugin/src/client/contracts.ts`                              | 2      | ~12      |
+| `packages/plugin/src/client/react-native.ts`                           | 2      | ~14      |
+| `packages/plugin/package.json`                                         | 2      | ~4       |
+| `packages/app/src/plugins/markdown-extensions.ts`                      | 2      | ~25      |
+| `packages/app/src/plugins/react-native/runtime.ts`                     | 2      | 3        |
+| `packages/app/src/plugins/react-native/markdown-source.tsx`            | 2      | ~12      |
+| `packages/app/src/assistant-selection-copy/markup.ts`                  | 2      | 2        |
+| `packages/app/src/assistant-selection-copy/content.web.ts`             | 2      | ~8       |
+| `packages/app/src/plugins/types.ts`                                    | 2      | 1        |
+| `packages/app/src/plugins/evaluate.ts`                                 | 2      | ~9       |
+| `packages/app/src/plugins/registry.ts`                                 | 2      | ~4       |
+| `packages/app/src/components/message.tsx`                              | 2      | ~10      |
+| **Total**                                                              |        | **~204** |
 
 About 100 of these lines are the fork's existing splitter and delimiter code, already covered by
 twenty tests. Commit 1 is separable and stands as an upstream bug fix on its own.
