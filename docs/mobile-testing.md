@@ -35,8 +35,6 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
-[markdown-math.ios.ad](../packages/app/e2e/mobile/agent-device/markdown-math.ios.ad) and [markdown-math.android.ad](../packages/app/e2e/mobile/agent-device/markdown-math.android.ad) need more than a connected workspace: they open the app and wait for the text "Energy is", which only appears once the `markdown-math` plugin is installed and an agent's last reply renders that formula response. Nothing in the repo seeds that state — `npm run test:e2e:mobile` runs `agent-device test` over this whole directory with `--fail-fast` (`scripts/test-mobile-agent-device.sh`), so these two scripts abort the run for anyone who hasn't installed the plugin and produced that reply by hand first.
-
 For Android keyboard continuity, run the current checkout in the app, open an idle terminal
 with an empty prompt, hide its keyboard, and run:
 
