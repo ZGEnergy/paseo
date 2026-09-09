@@ -807,6 +807,29 @@ Showing another toast replaces the currently visible toast. An empty message is 
 | `size`  | `number` | No       | Icon width and height.                          |
 | `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
+### SVG and markdown source
+
+`SvgXml` renders an SVG document string on every platform. It is the only vector-drawing
+primitive plugins get; plugin bundles still do not import `react-native-svg`.
+
+| Prop     | Type               | Required | Behavior                                     |
+| -------- | ------------------ | -------- | -------------------------------------------- |
+| `xml`    | `string \| null`   | Yes      | The SVG document. `null` renders nothing.    |
+| `width`  | `number \| string` | No       | Rendered width.                              |
+| `height` | `number \| string` | No       | Rendered height.                             |
+| `color`  | `string`           | No       | Value of `currentColor` inside the document. |
+
+`MarkdownSource` wraps content that has no text of its own, such as a rendered formula, and
+declares the markdown it copies as. A web drag selection that includes the wrapper copies
+`source` verbatim; the turn copy button is unaffected because it copies the raw message.
+
+| Prop       | Type        | Required | Behavior                                                    |
+| ---------- | ----------- | -------- | ----------------------------------------------------------- |
+| `source`   | `string`    | Yes      | Copied in place of the children.                            |
+| `display`  | `boolean`   | No       | `true` renders a block; default renders an inline text run. |
+| `style`    | style       | No       | Applied to the wrapper.                                     |
+| `children` | `ReactNode` | Yes      | What the user sees.                                         |
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
@@ -922,6 +945,56 @@ Recreate styles when `theme` or `layout.compact` changes.
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
 Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
+
+## Markdown extensions
+
+`addMarkdownExtension` extends how Paseo parses and renders assistant messages. The assistant
+row stays Paseo's; the extension adds token types, render rules, and block delimiters.
+
+```ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { markdownMath } from "./client/markdown-math";
+import { createMathMarkdownRules } from "./client/math-rules";
+import { MathFormula } from "./client/math-formula";
+
+export default function contribute(client: PluginClientContext) {
+  client.addMarkdownExtension({
+    id: "math",
+    parser: markdownMath,
+    rules: createMathMarkdownRules(MathFormula),
+    blockDelimiters: [
+      { open: "$$", close: "$$" },
+      { open: "\\[", close: "\\]" },
+    ],
+  });
+  return () => {};
+}
+```
+
+| Field             | Type                                | Required | Behavior                                                                                 |
+| ----------------- | ----------------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `id`              | `string`                            | Yes      | Unique per plugin. A duplicate throws.                                                   |
+| `parser`          | `(markdown: MarkdownIt) => void`    | No       | Applied with `use()` each time the assistant parser is built. A throw fails that build.  |
+| `rules`           | `RenderRules`                       | No       | Merged after Paseo's rules, so an extension rule wins on collision.                      |
+| `blockDelimiters` | `{ open: string; close: string }[]` | No       | Line-leading pairs the streaming splitter keeps in one block, closed or still streaming. |
+
+`parser` receives Paseo's live `markdown-it` instance, typed by `@types/markdown-it`. `rules` use
+`react-native-markdown-display`'s `RenderRules`; a leaf rule receives the inherited text style as
+its fifth argument, which is how prose color reaches a rendered token.
+
+`blockDelimiters` matter during streaming. Paseo splits a message into render blocks before any
+parser runs, so a `$$` block that has not closed yet would otherwise be split at its first blank
+line. A declared pair is matched at the start of a line, after any blockquote or list prefix, and
+holds every following line until an unescaped `close` appears or the text ends.
+
+A client that predates this capability reports `client.addMarkdownExtension is not a function`;
+set `requirements.paseo` to the first release that ships it. See `plugin-examples/markdown-math`.
+
+If a plugin uses `parser` or `rules`, add `@types/markdown-it` and `react-native-markdown-display`
+to its own `devDependencies`. The SDK declares both as optional peer dependencies, so neither
+installs automatically, and the scaffold's generated `tsconfig.json` sets `skipLibCheck: true`,
+which suppresses the missing-types error and silently leaves both fields typed as `any` — no
+completion, no checking, no diagnostic.
 
 ## Contribute a theme
 

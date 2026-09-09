@@ -427,6 +427,25 @@ must be at most 64 KiB; the daemon rejects a larger append instead of storing a 
 be rendered intact. The daemon advertises this RPC through
 `server_info.features.pluginTimelineItems`.
 
+## Contribute markdown extensions
+
+`addMarkdownExtension` is the client contribution for assistant markdown: a markdown-it plugin,
+render rules merged after the built-ins, and block delimiters the streaming splitter protects.
+`packages/app/src/plugins/markdown-extensions.ts` composes installed extensions; `AssistantMessage`
+applies them, and `PluginRegistry.publish()` pushes the delimiters into
+`packages/app/src/utils/split-markdown-blocks.ts` because the splitter also runs in the stream
+reducer and the height estimator, where no hook is available.
+
+`MarkdownSource` in `packages/app/src/plugins/react-native/markdown-source.tsx` marks non-text
+content, such as a rendered formula, with a copy-source attribute. The attribute alone is not
+enough: Turndown treats a text-free node as blank before it ever reaches a custom rule, and its
+whitespace pass strips the space that follows one. `packages/app/src/assistant-selection-copy/content.web.ts`
+gives the element real text content before Turndown runs, so both problems clear and the
+registered rule reads the attribute back out. See the comment above that loop for the mechanism.
+
+See the [public reference](../public-docs/plugins/v0.8/reference.md#markdown-extensions) and
+`plugin-examples/markdown-math`.
+
 ## Contribute client slash commands
 
 `addSlashCommand` registers an agent- or workspace-context command in the composer. The
