@@ -16,5 +16,5 @@ plugin compiler resolves `markdown-it`, `mathjax-full`, and `react-native-markdo
 the repo root's `node_modules`. Copying the directory somewhere else and installing it from there
 fails to compile.
 
-Measured on this checkout: client bundle 1623633 bytes minified; MathJax SVG emits
+Measured on this checkout: client bundle 1623730 bytes minified; MathJax SVG emits
 `currentColor` = true.

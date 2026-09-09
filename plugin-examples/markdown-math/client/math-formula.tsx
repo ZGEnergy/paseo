@@ -99,7 +99,15 @@ export function MathFormula({ expression, source, displayMode, textStyle }: Math
 
   const width = rendered.widthEx * fontSize * EX_PER_FONT_SIZE;
   const height = rendered.heightEx * fontSize * EX_PER_FONT_SIZE;
-  const formula = <SvgXml xml={rendered.xml} width={width} height={height} color={color} />;
+  // SvgXml draws glyph paths with no text content, so a screen reader has nothing to read.
+  // The deleted KaTeX path carried `aria-label={source}` on the element it rendered; give the
+  // SVG the same accessible name by wrapping it in a plain React Native element instead of
+  // widening the SDK's SvgXml/MarkdownSource surface.
+  const formula = (
+    <View accessible accessibilityRole="image" accessibilityLabel={source}>
+      <SvgXml xml={rendered.xml} width={width} height={height} color={color} />
+    </View>
+  );
 
   if (displayMode) {
     return (

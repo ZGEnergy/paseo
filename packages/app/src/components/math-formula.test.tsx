@@ -121,3 +121,30 @@ describe("MathFormula", () => {
     expect(container.textContent).toContain(source);
   });
 });
+
+// The deleted KaTeX path (packages/app/src/components/math-formula.web.tsx, pre-plugin) carried
+// aria-label={source} on the element it rendered, on both the inline and display branches. SvgXml
+// draws glyph paths with no text content, so without an explicit accessible name a screen reader
+// has nothing to announce for a rendered formula. These tests render the real MathFormula (only
+// SvgXml/MarkdownSource are mocked, not `react-native`/`react-native-web`), so the accessible name
+// asserted here is the one that actually reaches the DOM via react-native-web's
+// accessibilityLabel -> aria-label mapping.
+describe("MathFormula accessibility", () => {
+  it("gives the inline formula an accessible name equal to its LaTeX source", () => {
+    const source = "$E = mc^2$";
+    const { getByRole } = render(
+      <MathFormula expression="E = mc^2" source={source} displayMode={false} />,
+    );
+
+    expect(getByRole("img", { name: source })).toBeTruthy();
+  });
+
+  it("gives the display formula an accessible name equal to its LaTeX source", () => {
+    const source = "$$\\int_0^1 x^2 dx$$";
+    const { getByRole } = render(
+      <MathFormula expression="\\int_0^1 x^2 dx" source={source} displayMode={true} />,
+    );
+
+    expect(getByRole("img", { name: source })).toBeTruthy();
+  });
+});
