@@ -1,70 +1,45 @@
 import MarkdownIt from "markdown-it";
-import { findUnescapedDelimiter } from "./markdown-math";
 
 const markdownBlockParser = new MarkdownIt();
+
+function isEscaped(source: string, position: number): boolean {
+  let backslashCount = 0;
+  for (let index = position - 1; index >= 0 && source[index] === "\\"; index--) {
+    backslashCount++;
+  }
+  return backslashCount % 2 === 1;
+}
+
+export function findUnescapedDelimiter(source: string, delimiter: string): number {
+  let searchStart = 0;
+
+  while (searchStart < source.length) {
+    const delimiterStart = source.indexOf(delimiter, searchStart);
+    if (delimiterStart === -1) {
+      return -1;
+    }
+    if (!isEscaped(source, delimiterStart)) {
+      return delimiterStart;
+    }
+    searchStart = delimiterStart + delimiter.length;
+  }
+
+  return -1;
+}
 
 function getFenceDelimiter(line: string) {
   const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
   return match?.[2] ?? null;
 }
-interface DisplayMathDelimiter {
-  closing: "$$" | "\\]";
-  closesOnOpeningLine: boolean;
-}
-
-function stripMarkdownContainerPrefix(line: string): string {
-  let remainder = line;
-  let foundContainer = false;
-
-  while (true) {
-    const blockquote = /^ {0,3}>[ \t]?/.exec(remainder);
-    if (blockquote) {
-      remainder = remainder.slice(blockquote[0].length);
-      foundContainer = true;
-      continue;
-    }
-
-    const listItem = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(remainder);
-    if (listItem) {
-      remainder = remainder.slice(listItem[0].length);
-      foundContainer = true;
-      continue;
-    }
-
-    return foundContainer ? remainder : line;
-  }
-}
-
-function getDisplayMathDelimiter(line: string): DisplayMathDelimiter | null {
-  const content = stripMarkdownContainerPrefix(line);
-  const match = /^ {0,3}(\$\$|\\\[)/.exec(content);
-  if (!match) {
-    return null;
-  }
-
-  const opening = match[1];
-  const closing = opening === "$$" ? "$$" : "\\]";
-  const remainder = content.slice(match[0].length);
-  return {
-    closing,
-    closesOnOpeningLine: findUnescapedDelimiter(remainder, closing) !== -1,
-  };
-}
 
 interface ProtectedBlockState {
   fenceCharacter: "`" | "~" | null;
   fenceLength: number;
-  displayMathClosing: DisplayMathDelimiter["closing"] | null;
 }
 
+// markdown-it only emits a fence token for a closed fence, so a fence that is still
+// streaming has no token and its interior blank lines look like paragraph breaks.
 function updateProtectedBlockState(line: string, state: ProtectedBlockState): void {
-  if (state.displayMathClosing) {
-    if (findUnescapedDelimiter(line, state.displayMathClosing) !== -1) {
-      state.displayMathClosing = null;
-    }
-    return;
-  }
-
   const fenceDelimiter = getFenceDelimiter(line);
   if (state.fenceCharacter) {
     if (
@@ -80,12 +55,6 @@ function updateProtectedBlockState(line: string, state: ProtectedBlockState): vo
   if (fenceDelimiter) {
     state.fenceCharacter = fenceDelimiter[0] as "`" | "~";
     state.fenceLength = fenceDelimiter.length;
-    return;
-  }
-
-  const displayMathDelimiter = getDisplayMathDelimiter(line);
-  if (displayMathDelimiter && !displayMathDelimiter.closesOnOpeningLine) {
-    state.displayMathClosing = displayMathDelimiter.closing;
   }
 }
 
@@ -96,20 +65,14 @@ export function splitMarkdownBlocks(text: string): string[] {
 
   const blocks: string[] = [];
   let currentLines: string[] = [];
-  const protectedBlockState: ProtectedBlockState = {
-    fenceCharacter: null,
-    fenceLength: 0,
-    displayMathClosing: null,
-  };
+  const protectedBlockState: ProtectedBlockState = { fenceCharacter: null, fenceLength: 0 };
   let sawBlockSeparator = false;
   const lines = text.split("\n");
   const structuralBlankLines = getStructuralBlankLines(text, lines);
 
   for (const [index, line] of lines.entries()) {
     const isBlankLine = line.trim().length === 0;
-    const isInsideProtectedBlock =
-      protectedBlockState.fenceCharacter !== null ||
-      protectedBlockState.displayMathClosing !== null;
+    const isInsideProtectedBlock = protectedBlockState.fenceCharacter !== null;
 
     if (isBlankLine && (isInsideProtectedBlock || structuralBlankLines.has(index))) {
       currentLines.push(line);
