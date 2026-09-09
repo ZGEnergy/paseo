@@ -22,8 +22,8 @@ Last reviewed: 2026-09-08
 Observable behavior:
 
 - [x] Assistant messages parse inline, display, fenced, and streamed math without treating currency, code, escaped delimiters, or incomplete input as formulas.
-- [x] Web and Electron render accessible KaTeX and show malformed input as readable source.
-- [x] Native renders readable selectable source instead of failing.
+- [x] Web, Electron, and native render formulas as MathJax-generated SVG through the plugin SDK's `addMarkdownExtension`, and malformed input falls back to readable source on every platform.
+- [x] Native typesets instead of falling back to raw source, at the cost of per-formula long-press copy: React Native selection is per-`Text` and an SVG is not text, so only the turn-level copy button (which copies the raw markdown) covers a formula on native now.
 - [x] Math inherits readable theme and blockquote text color.
 - [ ] Upstream `main` provides the full behavior.
 

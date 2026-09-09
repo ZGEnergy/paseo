@@ -18,8 +18,6 @@ export type {
   PluginTimelineTransformerContribution,
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
-  PluginMarkdownBlockDelimiter,
-  PluginMarkdownExtension,
   PluginCommandCapabilities,
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,
@@ -28,6 +26,10 @@ export type {
   PluginClientSlashCommandContribution,
   SettingsState,
 } from "./contracts.js";
+export type {
+  PluginMarkdownBlockDelimiter,
+  PluginMarkdownExtension,
+} from "./markdown-extension.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

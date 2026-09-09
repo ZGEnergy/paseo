@@ -2,9 +2,8 @@ import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-import type MarkdownIt from "markdown-it";
-import type { RenderRules } from "react-native-markdown-display";
 import type { PluginRpcContract } from "../rpc.js";
+import type { PluginMarkdownExtension } from "./markdown-extension.js";
 import type {
   PluginTheme,
   PluginWorkspaceSnapshot,
@@ -14,21 +13,6 @@ import type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "../contracts.js";
-
-export interface PluginMarkdownBlockDelimiter {
-  open: string;
-  close: string;
-}
-
-export interface PluginMarkdownExtension {
-  id: string;
-  /** Runs once per parser build with Paseo's live markdown-it instance. */
-  parser?: (markdown: MarkdownIt) => void;
-  /** Merged after Paseo's built-in assistant rules, so a plugin rule wins on collision. */
-  rules?: RenderRules;
-  /** Line-leading pairs the streaming splitter must not split inside, open or unclosed. */
-  blockDelimiters?: PluginMarkdownBlockDelimiter[];
-}
 
 export interface PluginHostProps {
   theme: PluginTheme;

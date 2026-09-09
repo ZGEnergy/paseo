@@ -1995,7 +1995,17 @@ export const AssistantMessage = memo(function AssistantMessage({
     workspaceRoot,
   ]);
 
-  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
+  const blocks = useMemo(
+    () => splitMarkdownBlocks(revealedMessage),
+    // markdownExtensions isn't read inside the callback, but splitMarkdownBlocks reads
+    // module-global delimiters that PluginRegistry.publish() mutates on every
+    // install/remove. The splitter itself takes no extension argument because it also
+    // runs in the stream reducer and height estimator, where no hook is available.
+    // Depending on markdownExtensions here keeps an already-rendered message's block
+    // boundaries in sync when the plugin set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [revealedMessage, markdownExtensions],
+  );
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
