@@ -464,9 +464,9 @@ function restoreMarkdownElements(container: HTMLElement): void {
   // A `div`/`span` carrying MARKDOWN_COPY_SOURCE_ATTRIBUTE (e.g. MarkdownSource, wrapping a
   // rendered formula's non-text SVG) has no text node of its own. That makes it "blank" to
   // Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
-  // strips the space on either side of it, and its rule dispatch short-circuits straight to
-  // the blank-node replacement, before ever consulting the "declaredMarkdownSource" addRule
-  // below. Giving the element a real text node here fixes both — Turndown then sees ordinary
+  // strips the space that follows it, and its rule dispatch short-circuits straight to the
+  // blank-node replacement, before ever consulting the "declaredMarkdownSource" rule registered
+  // above. Giving the element a real text node here fixes both — Turndown then sees ordinary
   // non-blank content, preserves the surrounding whitespace, and reaches the addRule, whose
   // replacement ignores this text and returns the attribute value verbatim, so nothing written
   // here reaches the copied output. `container` is a clone of the selection (built in

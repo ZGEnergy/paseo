@@ -18,7 +18,9 @@ const REPO_ROOT_NODE_MODULES = path.resolve(EXAMPLE_DIRECTORY, "../../node_modul
 // fine when the plugin installs from its real in-repo path. Every other plugin fixture in this
 // suite copies into an OS temp dir for isolation, which breaks that ancestor node_modules walk
 // for a plugin with real npm dependencies. Symlinking the packages the temp copy needs mirrors
-// what a real consumer's `npm install` would produce, without touching the plugin's own source.
+// what a real consumer's `npm install` would produce, without touching the plugin's own source —
+// the same missing-package.json gap hits a real user installing this example from outside the
+// repo, not just this fixture's temp copy.
 const VENDORED_PACKAGES = [
   "markdown-it",
   "@types/markdown-it",
@@ -195,6 +197,7 @@ test("renders LaTeX through the markdown-math plugin and copies its source", asy
     });
 
     await test.step("a wide display equation scrolls instead of overflowing a phone viewport", async () => {
+      const originalViewport = page.viewportSize();
       await page.setViewportSize(PHONE_VIEWPORT);
       const wideFormulaSvg = assistantMessage.locator("svg").nth(4);
       const wideFormulaWrapper = wideFormulaSvg.locator(
@@ -223,6 +226,13 @@ test("renders LaTeX through the markdown-math plugin and copies its source", asy
         path: testInfo.outputPath("plugin-markdown-math-wide-display-phone.png"),
         fullPage: true,
       });
+
+      // The copy step and the plugin-removal step run after this one and rely on the same
+      // rendering the earlier steps asserted against — restore the viewport so they don't
+      // silently run under the compact form factor's rendering path instead.
+      if (originalViewport) {
+        await page.setViewportSize(originalViewport);
+      }
     });
 
     await test.step("a drag selection copies the LaTeX source with its spacing", async () => {
