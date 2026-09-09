@@ -11,5 +11,5 @@ formula that is still streaming is never split across render blocks.
 Copy is unchanged: the turn copy button writes the raw markdown. A web drag selection copies the
 formula's LaTeX because `MathFormula` wraps its SVG in the host's `MarkdownSource`.
 
-Measured on this checkout: client bundle 1622911 bytes minified; MathJax SVG emits
+Measured on this checkout: client bundle 1623633 bytes minified; MathJax SVG emits
 `currentColor` = true.
