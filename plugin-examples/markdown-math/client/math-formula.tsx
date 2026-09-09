@@ -32,8 +32,9 @@ const typesetter = mathjax.document("", {
   OutputJax: new SVG({ fontCache: "none" }),
 });
 
-// MathJax sizes its SVG in ex; one ex is about half the font size.
-const EX_PER_FONT_SIZE = 0.5;
+// MathJax sizes its SVG in ex; one ex is about half the font size. Exported so tests can
+// compute the expected pixel size without duplicating this constant.
+export const EX_PER_FONT_SIZE = 0.5;
 const DEFAULT_FONT_SIZE = 16;
 
 export interface RenderedSvg {
