@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import MarkdownIt from "markdown-it";
-import { markdownMath } from "./markdown-math";
+import { markdownMath } from "../../../../plugin-examples/markdown-math/client/markdown-math";
 
 function getMathTokens(markdown: string) {
   const parser = MarkdownIt().use(markdownMath);
