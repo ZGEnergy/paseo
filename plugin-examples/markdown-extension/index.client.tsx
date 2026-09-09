@@ -52,7 +52,14 @@ export default function contribute(client: PluginClientContext) {
     rules: {
       badge_inline: (node) => (
         <MarkdownSource key={node.key} source={`${INLINE_MARKER}${node.content}${INLINE_MARKER}`}>
-          <View style={styles.badge}>
+          {/* SvgXml draws paths with no text content, so a screen reader has nothing to read.
+              Give non-text content an accessible name; MarkdownSource carries the markdown. */}
+          <View
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={node.content}
+            style={styles.badge}
+          >
             <SvgXml xml={BADGE_SVG} width={10} height={10} />
           </View>
         </MarkdownSource>
