@@ -19,6 +19,10 @@ Evidence baseline:
 
 Last reviewed: 2026-09-08
 
+The rendering is no longer in this repo. It ships as the `markdown-math` plugin from
+`ZGEnergy/dev-tools` at `paseo/markdown-math-plugin/`, and the behaviors below hold for a user who
+installs it.
+
 Observable behavior:
 
 - [x] Assistant messages parse inline, display, fenced, and streamed math without treating currency, code, escaped delimiters, or incomplete input as formulas.
@@ -33,9 +37,10 @@ Fork evidence:
 - [ZGEnergy/paseo#21](https://github.com/ZGEnergy/paseo/pull/21), merge `db0df8107ae90ac5ba495c79286d9c83b1cadcc4`: import verification and provenance follow-up; no additional runtime behavior.
 - [ZGEnergy/paseo#28](https://github.com/ZGEnergy/paseo/pull/28), merge `6574593b878faafb60eef094b3651bdf854ad064`: inherited theme and blockquote color with focused tests.
 - [ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98): replaces the built-in
-  patch with `addMarkdownExtension`, `SvgXml`, and `MarkdownSource` in the plugin SDK plus the
-  `markdown-math` example. Native now typesets. Retirement runs through the upstream SDK PR, not
-  the closed getpaseo/paseo#2562.
+  patch with `addMarkdownExtension`, `SvgXml`, and `MarkdownSource` in the plugin SDK, with
+  `plugin-examples/markdown-extension` as the reference. The LaTeX rendering itself moves to the
+  `markdown-math` plugin, which typesets on native. Retirement runs through the upstream SDK PR,
+  not the closed getpaseo/paseo#2562.
 
 Upstream evidence:
 

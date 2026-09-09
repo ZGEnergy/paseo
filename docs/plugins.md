@@ -444,7 +444,9 @@ gives the element real text content before Turndown runs, so both problems clear
 registered rule reads the attribute back out. See the comment above that loop for the mechanism.
 
 See the [public reference](../public-docs/plugins/v0.8/reference.md#markdown-extensions) and
-`plugin-examples/markdown-math`.
+`plugin-examples/markdown-extension`, which exercises every field of the contribution in about
+seventy lines. The fork's full LaTeX plugin is not in this repo: it lives in `ZGEnergy/dev-tools`
+at `paseo/markdown-math-plugin/`.
 
 ## Contribute client slash commands
 

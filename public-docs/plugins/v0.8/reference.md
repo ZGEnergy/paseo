@@ -951,23 +951,26 @@ Workspace and agent panels receive the same `theme`, `layout`, and optional `nav
 `addMarkdownExtension` extends how Paseo parses and renders assistant messages. The assistant
 row stays Paseo's; the extension adds token types, render rules, and block delimiters.
 
-```ts
+```tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { markdownMath } from "./client/markdown-math";
-import { createMathMarkdownRules } from "./client/math-rules";
-import { MathFormula } from "./client/math-formula";
+import { MarkdownSource, SvgXml } from "@getpaseo/plugin/client/react-native";
 
 export default function contribute(client: PluginClientContext) {
-  client.addMarkdownExtension({
-    id: "math",
-    parser: markdownMath,
-    rules: createMathMarkdownRules(MathFormula),
-    blockDelimiters: [
-      { open: "$$", close: "$$" },
-      { open: "\\[", close: "\\]" },
-    ],
+  return client.addMarkdownExtension({
+    id: "badge",
+    parser: (markdown) => {
+      markdown.inline.ruler.before("escape", "badge_inline", parseBadge);
+      markdown.block.ruler.before("fence", "badge_block", parseBadgeBlock);
+    },
+    rules: {
+      badge_inline: (node) => (
+        <MarkdownSource key={node.key} source={`::${node.content}::`}>
+          <SvgXml xml={BADGE_SVG} width={10} height={10} />
+        </MarkdownSource>
+      ),
+    },
+    blockDelimiters: [{ open: ":::", close: ":::" }],
   });
-  return () => {};
 }
 ```
 
@@ -984,18 +987,22 @@ live instance is markdown-it 10.x; APIs added after v10 will be `undefined` at r
 its fifth argument, which is how prose color reaches a rendered token.
 
 `blockDelimiters` matter during streaming. Paseo splits a message into render blocks before any
-parser runs, so a `$$` block that has not closed yet would otherwise be split at its first blank
+parser runs, so a `:::` block that has not closed yet would otherwise be split at its first blank
 line. A declared pair is matched at the start of a line, after any blockquote or list prefix, and
 holds every following line until an unescaped `close` appears or the text ends.
 
 A client that predates this capability reports `client.addMarkdownExtension is not a function`;
-set `requirements.paseo` to the first release that ships it. See `plugin-examples/markdown-math`.
+set `requirements.paseo` to the first release that ships it. `plugin-examples/markdown-extension`
+is a runnable plugin that uses every field above.
 
-If a plugin uses `parser` or `rules`, add `@types/markdown-it` and `react-native-markdown-display`
-to its own `devDependencies`. The SDK declares both as optional peer dependencies, so neither
-installs automatically, and the scaffold's generated `tsconfig.json` sets `skipLibCheck: true`,
-which suppresses the missing-types error and silently leaves both fields typed as `any` — no
-completion, no checking, no diagnostic.
+Writing the callbacks inline, as above, types them from the contribution's own signature and needs
+no extra package. Name `MarkdownIt`, `ASTNode`, or `RenderRules` yourself and you must add
+`@types/markdown-it` and `react-native-markdown-display` to your `devDependencies`. The SDK
+declares both as optional peer dependencies, so neither installs automatically, and two failures
+follow from a missing one: the scaffold's generated `tsconfig.json` sets `skipLibCheck: true`,
+which suppresses the missing-types error and leaves both fields typed as `any` — no completion, no
+checking, no diagnostic — and the plugin compiler refuses to build a plugin whose type-only import
+does not resolve.
 
 ## Contribute a theme
 
