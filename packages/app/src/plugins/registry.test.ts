@@ -1,6 +1,7 @@
 import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { getMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { pluginRegistry as registry } from "./registry";
 
 vi.mock("./navigation", () => ({
@@ -218,5 +219,28 @@ describe("PluginRegistry", () => {
 
     expect(() => pluginRegistry.removeHost("host-a")).not.toThrow();
     expect(pluginRegistry.getSnapshot()).toEqual([]);
+  });
+
+  it("pushes declared block delimiters into the markdown splitter on publish", () => {
+    const clientBundle = `(function() {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "math",
+            blockDelimiters: [{ open: "$$", close: "$$" }, { open: "\\\\[", close: "\\\\]" }],
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`;
+
+    pluginRegistry.installCatalog("host-a", [{ id: "math-plugin", clientBundle }]);
+    expect(getMarkdownBlockDelimiters()).toEqual([
+      { open: "$$", close: "$$" },
+      { open: "\\[", close: "\\]" },
+    ]);
+
+    pluginRegistry.removeHost("host-a");
+    expect(getMarkdownBlockDelimiters()).toEqual([]);
   });
 });

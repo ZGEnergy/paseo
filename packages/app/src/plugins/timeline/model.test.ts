@@ -32,6 +32,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
 }
 

@@ -18,6 +18,8 @@ export type {
   PluginTimelineTransformerContribution,
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
+  PluginMarkdownBlockDelimiter,
+  PluginMarkdownExtension,
   PluginCommandCapabilities,
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,

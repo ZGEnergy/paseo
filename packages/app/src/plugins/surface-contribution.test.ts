@@ -32,6 +32,7 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
 }
 

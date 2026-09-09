@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/plugin";
 import {
   type PluginCommandCenterItemContribution,
+  type PluginMarkdownExtension,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
   type PluginSidebarContribution,
@@ -90,6 +91,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    markdownExtensions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -101,6 +103,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const markdownExtensionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   const notifyChange = () => {
@@ -335,6 +338,21 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    addMarkdownExtension(contribution: PluginMarkdownExtension) {
+      const normalizedId = requireId(contribution.id, "markdown extension id");
+      if (markdownExtensionIds.has(normalizedId)) {
+        throw new Error(`Duplicate markdown extension: ${normalizedId}`);
+      }
+      for (const pair of contribution.blockDelimiters ?? []) {
+        if (!pair.open || !pair.close) {
+          throw new Error(`Markdown extension ${normalizedId} has an empty block delimiter`);
+        }
+      }
+      markdownExtensionIds.add(normalizedId);
+      return register(collector.markdownExtensions, { ...contribution, id: normalizedId }, () =>
+        markdownExtensionIds.delete(normalizedId),
+      );
+    },
     addComposerPill(contribution) {
       const removePill = runtime.addComposerPill(contribution);
       let active = true;
@@ -417,5 +435,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    markdownExtensions: collector.markdownExtensions,
   };
 }

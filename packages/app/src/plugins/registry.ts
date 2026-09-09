@@ -3,8 +3,10 @@ import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
+import { setMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
+import { collectMarkdownBlockDelimiters } from "./markdown-extensions";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -91,6 +93,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          markdownExtensions: [],
         };
         const evaluated = runPluginClientBundle(
           entry.id,
@@ -154,6 +157,9 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    // The block splitter runs in the stream reducer and the height estimator, which cannot
+    // subscribe to this registry, so push the delimiters instead of having them pull.
+    setMarkdownBlockDelimiters(collectMarkdownBlockDelimiters(this.snapshot));
     for (const listener of this.listeners) listener();
   }
 }
