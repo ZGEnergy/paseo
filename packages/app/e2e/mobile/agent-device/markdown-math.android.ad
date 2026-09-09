@@ -3,5 +3,5 @@ env APP_ID=sh.paseo.debug
 
 open "${APP_ID}"
 wait "text" "Energy is" 20000
-is absent "text=\"$\""
+is absent "text=\"Energy is $E = mc^2$ here.\""
 close
