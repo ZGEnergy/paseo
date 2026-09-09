@@ -32,7 +32,7 @@ Fork evidence:
 - [ZGEnergy/paseo#6](https://github.com/ZGEnergy/paseo/pull/6), merge `79e27189c7eda9315d30bd44690ac032b3832e05`: parser, streaming protection, web renderer, native fallback, and tests.
 - [ZGEnergy/paseo#21](https://github.com/ZGEnergy/paseo/pull/21), merge `db0df8107ae90ac5ba495c79286d9c83b1cadcc4`: import verification and provenance follow-up; no additional runtime behavior.
 - [ZGEnergy/paseo#28](https://github.com/ZGEnergy/paseo/pull/28), merge `6574593b878faafb60eef094b3651bdf854ad064`: inherited theme and blockquote color with focused tests.
-- [ZGEnergy/paseo#<number>](https://github.com/ZGEnergy/paseo/pull/<number>): replaces the built-in
+- [ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98): replaces the built-in
   patch with `addMarkdownExtension`, `SvgXml`, and `MarkdownSource` in the plugin SDK plus the
   `markdown-math` example. Native now typesets. Retirement runs through the upstream SDK PR, not
   the closed getpaseo/paseo#2562.
