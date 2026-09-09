@@ -461,7 +461,31 @@ function restoreMarkdownElements(container: HTMLElement): void {
     element.replaceWith(...element.childNodes);
   }
 
-  const presentational = Array.from(container.querySelectorAll("div, span"));
+  // A `div`/`span` carrying MARKDOWN_COPY_SOURCE_ATTRIBUTE (e.g. MarkdownSource, wrapping a
+  // rendered formula's non-text SVG) has no text node of its own. That makes it "blank" to
+  // Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
+  // strips the space on either side of it, and its rule dispatch short-circuits straight to
+  // the blank-node replacement, before ever consulting the "declaredMarkdownSource" addRule
+  // below. Giving the element a real text node here fixes both — Turndown then sees ordinary
+  // non-blank content, preserves the surrounding whitespace, and reaches the addRule, whose
+  // replacement ignores this text and returns the attribute value verbatim, so nothing written
+  // here reaches the copied output. `container` is a clone of the selection (built in
+  // `cloneMarkdownSelection`), so mutating it here is as safe as every other step in this
+  // function already assumes.
+  for (const element of container.querySelectorAll(`[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`)) {
+    const source = element.getAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE);
+    if (source !== null) {
+      element.textContent = source;
+    }
+  }
+
+  // Unwrapping the element above, before Turndown ever runs, would delete the attribute along
+  // with the element and silently drop its content from the copy — so it's excluded here too.
+  const presentational = Array.from(
+    container.querySelectorAll(
+      `div:not([${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]), span:not([${MARKDOWN_COPY_SOURCE_ATTRIBUTE}])`,
+    ),
+  );
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
