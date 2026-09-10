@@ -130,6 +130,18 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  // Agents show LaTeX source in fenced blocks, so an opener inside a fence must not arm
+  // protection for the rest of the message. Fence tracking is what stops that; markdown-it's
+  // own token pass already keeps the fence's interior blank lines together.
+  it("does not let an opener inside a code fence open protection", () => {
+    expect(splitMarkdownBlocks("Source:\n\n```latex\n$$\nx^2\n```\n\nOne\n\nTwo", math)).toEqual([
+      "Source:",
+      "```latex\n$$\nx^2\n```",
+      "One",
+      "Two",
+    ]);
+  });
+
   it("does not protect a pair that no extension declared", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$")).toEqual(["Before", "$$\na", "b\n$$"]);
   });

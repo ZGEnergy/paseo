@@ -1,6 +1,6 @@
 import MarkdownIt from "markdown-it";
 import type { PluginMarkdownExtension } from "@getpaseo/plugin/client";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyMarkdownExtensionParsers,
   collectMarkdownBlockDelimiters,
@@ -15,6 +15,8 @@ const shout: PluginMarkdownExtension = {
       for (const token of state.tokens) {
         if (token.type === "inline") token.content = token.content.toUpperCase();
       }
+      // markdown-it ignores a core rule's return value; the v10 types require one anyway.
+      return true;
     });
   },
   rules: { paragraph: () => null },
@@ -52,8 +54,11 @@ describe("mergeMarkdownExtensionRules", () => {
   it("spreads extension rules after the base so a later extension wins", () => {
     const base = { paragraph: () => "base", text: () => "text" };
     const merged = mergeMarkdownExtensionRules(base, [shout, quiet]);
-    expect(merged.paragraph).toBe(quiet.rules?.paragraph);
-    expect(merged.heading1).toBe(quiet.rules?.heading1);
+    const call = (rule: (typeof merged)[string]) =>
+      rule?.({} as never, [], [], {} as never, {} as never);
+    // Plugin rules come back wrapped, so compare what they render rather than identity.
+    expect(call(merged.paragraph)).toBe("quiet");
+    expect(call(merged.heading1)).toBe("h1");
     expect(merged.text).toBe(base.text);
   });
 
@@ -62,5 +67,59 @@ describe("mergeMarkdownExtensionRules", () => {
     const merged = mergeMarkdownExtensionRules(base, [quiet]);
     expect(merged).not.toBe(base);
     expect(Object.keys(base)).toEqual(["text"]);
+  });
+});
+
+describe("isolating a failing extension", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Both run while an assistant message renders, so an escaping error reaches the root boundary
+  // and replaces the whole app. Every other kind of plugin contribution is already wrapped.
+  it("keeps a throwing parser from escaping, and still applies the others", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const broken: PluginMarkdownExtension = {
+      id: "broken",
+      parser: () => {
+        throw new Error("boom");
+      },
+    };
+
+    const applied: string[] = [];
+    const healthy: PluginMarkdownExtension = {
+      id: "healthy",
+      parser: () => {
+        applied.push("healthy");
+      },
+    };
+
+    applyMarkdownExtensionParsers(new MarkdownIt(), [broken, healthy]);
+
+    expect(applied).toEqual(["healthy"]);
+    expect(warn).toHaveBeenCalledWith(
+      "[Plugins] Markdown extension broken failed to install",
+      expect.any(Error),
+    );
+  });
+
+  it("renders nothing for a rule that throws instead of failing the message", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const broken: PluginMarkdownExtension = {
+      id: "broken",
+      rules: {
+        paragraph: () => {
+          throw new Error("boom");
+        },
+      },
+    };
+
+    const rules = mergeMarkdownExtensionRules({}, [broken]);
+
+    expect(rules.paragraph?.({} as never, [], [], {} as never, {} as never)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      "[Plugins] Markdown rule broken/paragraph failed",
+      expect.any(Error),
+    );
   });
 });

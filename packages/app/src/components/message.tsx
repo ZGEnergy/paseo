@@ -66,7 +66,7 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { useInstalledPlugins } from "@/plugins/registry";
+import { useHostPlugins } from "@/plugins/registry";
 import {
   applyMarkdownExtensionParsers,
   collectMarkdownExtensions,
@@ -1506,11 +1506,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
-  const installedPlugins = useInstalledPlugins();
-  const markdownExtensions = useMemo(
-    () => collectMarkdownExtensions(installedPlugins),
-    [installedPlugins],
-  );
+  // Scoped to the host this message came from: with two hosts connected, a plugin installed on
+  // one must not rewrite the other's messages.
+  const hostPlugins = useHostPlugins(serverId);
+  const markdownExtensions = useMemo(() => collectMarkdownExtensions(hostPlugins), [hostPlugins]);
   const markdownParser = useMemo(
     () => applyMarkdownExtensionParsers(createAssistantMarkdownParser(), markdownExtensions),
     [markdownExtensions],

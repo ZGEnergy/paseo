@@ -185,6 +185,21 @@ export function useInstalledPlugin(serverId: string, pluginId: string): Installe
   );
 }
 
+/** No host means no plugins, not every host's. */
+export function selectHostPlugins(
+  installed: readonly InstalledPlugin[],
+  serverId: string | undefined,
+): InstalledPlugin[] {
+  if (!serverId) return [];
+  return installed.filter((plugin) => plugin.serverId === serverId);
+}
+
+/** Plugins installed on one host. */
+export function useHostPlugins(serverId: string | undefined): InstalledPlugin[] {
+  const installed = useInstalledPlugins();
+  return useMemo(() => selectHostPlugins(installed, serverId), [installed, serverId]);
+}
+
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {
   const installed = useInstalledPlugins();
   return useMemo(() => installed.filter((plugin) => plugin.id === pluginId), [installed, pluginId]);

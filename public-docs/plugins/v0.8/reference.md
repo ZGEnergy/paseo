@@ -981,8 +981,8 @@ export default function contribute(client: PluginClientContext) {
 | `rules`           | `RenderRules`                       | No       | Merged after Paseo's rules, so an extension rule wins on collision.                      |
 | `blockDelimiters` | `{ open: string; close: string }[]` | No       | Line-leading pairs the streaming splitter keeps in one block, closed or still streaming. |
 
-`parser` receives Paseo's live `markdown-it` instance, typed by `@types/markdown-it`, though the
-live instance is markdown-it 10.x; APIs added after v10 will be `undefined` at runtime. `rules` use
+`parser` receives Paseo's live `markdown-it` instance, typed by `@types/markdown-it` at the major
+Paseo runs, so an API the host does not have will not typecheck. `rules` use
 `react-native-markdown-display`'s `RenderRules`; a leaf rule receives the inherited text style as
 its fifth argument, which is how prose color reaches a rendered token.
 

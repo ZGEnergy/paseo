@@ -67,7 +67,7 @@
   "devDependencies": {
     "@getpaseo/client": "0.8.0-beta.1",
     "@getpaseo/protocol": "0.8.0-beta.1",
-    "@types/markdown-it": "^14.1.2",
+    "@types/markdown-it": "^10.0.3",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -80,7 +80,7 @@
   "peerDependencies": {
     "@getpaseo/client": "0.8.0-beta.1",
     "@getpaseo/protocol": "0.8.0-beta.1",
-    "@types/markdown-it": "^14.1.2",
+    "@types/markdown-it": "^10.0.3",
     "react": "~19.1.0",
     "react-native": ">=0.81.5",
     "react-native-markdown-display": "^7.0.2",

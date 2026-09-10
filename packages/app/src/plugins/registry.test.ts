@@ -2,7 +2,8 @@ import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
-import { pluginRegistry as registry } from "./registry";
+import { pluginRegistry as registry, selectHostPlugins } from "./registry";
+import type { InstalledPlugin } from "./types";
 
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -242,5 +243,21 @@ describe("PluginRegistry", () => {
 
     pluginRegistry.removeHost("host-a");
     expect(getMarkdownBlockDelimiters()).toEqual([]);
+  });
+});
+
+describe("selectHostPlugins", () => {
+  const alpha = { serverId: "alpha", id: "math" } as InstalledPlugin;
+  const beta = { serverId: "beta", id: "math" } as InstalledPlugin;
+
+  // Markdown extensions rewrite assistant messages, so with two hosts connected a plugin
+  // installed on one must not reach the other's messages.
+  it("returns only the named host's plugins", () => {
+    expect(selectHostPlugins([alpha, beta], "alpha")).toEqual([alpha]);
+  });
+
+  it("returns nothing when the host is unknown", () => {
+    expect(selectHostPlugins([alpha, beta], undefined)).toEqual([]);
+    expect(selectHostPlugins([alpha, beta], "")).toEqual([]);
   });
 });
