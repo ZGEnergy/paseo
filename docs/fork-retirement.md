@@ -8,10 +8,10 @@ Last reviewed: 2026-09-10
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `5ae0651c8ffb05b96e4af554e738cb207db1d701`
-- fork upstream mirror: `origin/main` at `92504cd525c7e594539a369ed441eb836372dd2d`
+- fork integration: `origin/internal/main` at `1ceba125a53cd7492649228a7646ae4bcfa6df8e`
+- fork upstream mirror: `origin/main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
 - upstream: `getpaseo/paseo` `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
-- review-period fork merge [#97](https://github.com/ZGEnergy/paseo/pull/97) refreshed this ledger only; no new downstream product capability landed
+- review-period fork merges [#97](https://github.com/ZGEnergy/paseo/pull/97) and [#100](https://github.com/ZGEnergy/paseo/pull/100) only refreshed this ledger; no new downstream product capability landed
 
 ## LaTeX assistant-message rendering
 
