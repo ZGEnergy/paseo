@@ -8,10 +8,10 @@ Last reviewed: 2026-09-10
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `1ceba125a53cd7492649228a7646ae4bcfa6df8e`
+- fork integration: `origin/internal/main` at `4449d7d10796df89acd1cd442a76791904b8b65c`
 - fork upstream mirror: `origin/main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
 - upstream: `getpaseo/paseo` `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
-- review-period fork merges [#97](https://github.com/ZGEnergy/paseo/pull/97) and [#100](https://github.com/ZGEnergy/paseo/pull/100) only refreshed this ledger; no new downstream product capability landed
+- review-period fork merges [#97](https://github.com/ZGEnergy/paseo/pull/97), [#100](https://github.com/ZGEnergy/paseo/pull/100), and [#102](https://github.com/ZGEnergy/paseo/pull/102) only refreshed this ledger; no new downstream product capability landed
 
 ## LaTeX assistant-message rendering
 
@@ -63,7 +63,7 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, closed unmerged in favor of [#2777](https://github.com/getpaseo/paseo/pull/2777). That merged change aggregates native-child activity into workspace status while explicitly leaving parent lifecycle unchanged; it does not add bounded completion, yield settlement, or interruption-safe children.
-- Upstream `main` still completes from provider state alone with an unbounded retry loop and terminalizes running children on interruption at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`.
+- Upstream `main` still completes from provider state alone at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`: `completeTurnAfterProviderIdle` polls `runtimeSession.getState()` until `!isStreaming && !isCompacting` with swallowed state errors, a fixed 10ms default retry, and no elapsed-time or failure budget, and no child-activity awareness; interruption still terminalizes running children.
 
 ## OMP Ask option descriptions
 
@@ -110,7 +110,7 @@ Upstream evidence:
 
 - [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, closed unmerged in favor of [#3394](https://github.com/getpaseo/paseo/pull/3394), merge `42245d139ad1f3ba93c3e691e9e0a7971169ea79`.
 - Upstream active-turn steering, commit `f9e1def954550ec50c45ffa435f5fe1d57fc48f3`, and archive-continuation commit `613cbbe9ef7b461bdd7e859cf2303598100ad924` cover explicit steering, stale interrupt-window frames, and archived workspaces. They do not replace default follow-up admission during an autonomous turn or completed task-notification settlement.
-- No dedicated upstream pull request or equivalent `main` implementation covers leftover task-protocol settlement at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`.
+- Upstream `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232` routes `task_notification` through `appendTaskNotificationEvents`, which appends provider-subagent events only and never settles a leftover autonomous turn; follow-up admission falls through `steerActiveTurn`, so a compatible background child neither keeps the parent admitted nor blocks replacement.
 
 ## Retired history
 
