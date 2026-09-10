@@ -1,6 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { MarkdownSource, SvgXml } from "@getpaseo/plugin/client/react-native";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 const INLINE_MARKER = "::";
 const BLOCK_FENCE = ":::";
@@ -76,7 +76,12 @@ export default function contribute(client: PluginClientContext) {
               : `${BLOCK_FENCE}\n${node.content}`
           }
         >
-          <Text>{node.content}</Text>
+          {/* Drawn, not written — the same case a formula renderer is in. A display block that
+              rendered its content as text would not need MarkdownSource at all, because the text
+              would already reach the clipboard on its own. */}
+          <View accessible accessibilityRole="image" accessibilityLabel={node.content}>
+            <SvgXml xml={BADGE_SVG} width={32} height={32} />
+          </View>
         </MarkdownSource>
       ),
     },

@@ -1,8 +1,12 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { MARKDOWN_COPY_SOURCE_DATASET_KEY } from "@/assistant-selection-copy/markup";
+import { isWeb } from "@/constants/platform";
 
 const SELECT_AS_UNIT = { userSelect: "all" } as const;
+// Absolute so it cannot take a line of its own in the display branch's column layout.
+const CARET_ANCHOR = { position: "absolute" } as const;
+const ZERO_WIDTH_SPACE = "​";
 
 export interface MarkdownSourceProps {
   source: string;
@@ -11,10 +15,16 @@ export interface MarkdownSourceProps {
   children: ReactNode;
 }
 
-// `userSelect: "all"` makes the wrapped content select as one unit. Without it a drag that
-// starts on non-text content — a rendered formula's SVG, say — cannot place a caret inside it,
-// so the browser collapses the anchor to just after the element and the selection excludes it
-// entirely: the source never reaches the clipboard.
+// Wrapped content is usually drawn rather than written — a rendered formula's SVG, say — so the
+// wrapper often holds no text of its own. A browser selection anchors to a text position, and
+// without one inside the wrapper a press anchors at the nearest text instead: in the next block
+// entirely for display content, or just past the element for inline content. Either way the
+// selection excludes the wrapper and its source never reaches the clipboard. A zero-width space
+// supplies the missing position, and `userSelect: "all"` widens it to the whole wrapper.
+//
+// Native has no caret and no DOM selection, so the anchor is web-only. There it costs nothing:
+// screen readers do not announce a zero-width space, and the copy path overwrites the wrapper's
+// text with `source` anyway.
 //
 // Inline content is a nested Text so react-native-web emits a span and the copy serializer
 // keeps the surrounding spaces; a View would be a div, which Turndown treats as a block and
@@ -28,6 +38,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
         dataSet={dataSet}
         accessibilityLabel={source}
       >
+        {isWeb ? <Text style={CARET_ANCHOR}>{ZERO_WIDTH_SPACE}</Text> : null}
         {children}
       </View>
     );
@@ -38,6 +49,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
       dataSet={dataSet}
       accessibilityLabel={source}
     >
+      {isWeb ? ZERO_WIDTH_SPACE : null}
       {children}
     </Text>
   );

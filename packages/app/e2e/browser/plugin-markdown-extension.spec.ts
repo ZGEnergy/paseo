@@ -16,6 +16,7 @@ const INLINE_LINE = `Inline ${INLINE_SOURCE} renders as a badge.`;
 // ever sees "still".
 const BLOCK_SOURCE = ":::\nstill\n\nstreaming";
 const RESPONSE = `${INLINE_LINE}\n\n${BLOCK_SOURCE}`;
+const SENTINEL = "__CLIPBOARD_SENTINEL__";
 
 // Runs in the browser, so it can't close over MARKDOWN_SOURCE_SELECTOR.
 function readDeclaredSources(elements: HTMLElement[]): (string | null)[] {
@@ -68,10 +69,9 @@ test("renders and copies assistant markdown through an installed extension", asy
     await expect(assistantMessage).toBeVisible({ timeout: 30_000 });
 
     await test.step("the extension's parser and rules render through the assistant message", async () => {
-      // One svg: the inline badge the extension draws with the SDK's SvgXml.
-      await expect(assistantMessage.locator("svg")).toHaveCount(1, { timeout: 30_000 });
+      // Two svgs: the inline badge and the display block, both drawn with the SDK's SvgXml.
+      await expect(assistantMessage.locator("svg")).toHaveCount(2, { timeout: 30_000 });
       await expect(assistantMessage).toContainText("renders as a badge.");
-      await expect(assistantMessage).toContainText("streaming");
       await expect(assistantMessage).not.toContainText(INLINE_SOURCE);
       await expect(assistantMessage).not.toContainText(":::");
     });
@@ -88,6 +88,18 @@ test("renders and copies assistant markdown through an installed extension", asy
       await selectAssistantMessage(page);
       const copied = await copySelection(page);
       expect(copied).toBe(`${INLINE_LINE}\n\n${BLOCK_SOURCE}`);
+    });
+
+    await test.step("clicking drawn display content selects and copies its source", async () => {
+      await allowClipboard(context);
+      // A display block whose content is drawn has no text of its own, so the browser has no
+      // caret position to anchor a press inside it. Without one it anchors in the next block
+      // that does have text and the block's source never reaches the clipboard.
+      // Overwrite the clipboard first: a copy that never happens would otherwise pass on the
+      // value the previous step left behind.
+      await page.evaluate((sentinel) => navigator.clipboard.writeText(sentinel), SENTINEL);
+      await assistantMessage.locator("svg").last().click();
+      expect(await copySelection(page)).toBe(BLOCK_SOURCE);
     });
 
     await test.step("removing the plugin restores the built-in rendering", async () => {
