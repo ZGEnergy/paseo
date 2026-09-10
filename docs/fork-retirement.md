@@ -17,16 +17,21 @@ Evidence baseline:
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-08
+Last reviewed: 2026-09-10
 
 The rendering is no longer in this repo. It ships as the `markdown-math` plugin from
 `ZGEnergy/dev-tools` at `paseo/markdown-math-plugin/`, and the behaviors below hold for a user who
 installs it.
 
+Evidence for these behaviors is the plugin's own tests plus a browser end-to-end run against the
+installed plugin. No iOS, Android, or Electron run has happened since the rendering moved out of
+this repo; [ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98) carries that check.
+
 Observable behavior:
 
 - [x] Assistant messages parse inline, display, fenced, and streamed math without treating currency, code, escaped delimiters, or incomplete input as formulas.
 - [x] Web, Electron, and native render formulas as MathJax-generated SVG through the plugin SDK's `addMarkdownExtension`, and malformed input falls back to readable source on every platform.
+- [x] On the web, clicking or dragging a formula copies its LaTeX source verbatim and unescaped. A formula is drawn rather than written, so it has no text for a selection to anchor to; the SDK's `MarkdownSource` supplies both that anchor and the source to serialize.
 - [x] Native typesets instead of falling back to raw source, at the cost of per-formula long-press copy: React Native selection is per-`Text` and an SVG is not text, so only the turn-level copy button (which copies the raw markdown) covers a formula on native now.
 - [x] Math inherits readable theme and blockquote text color.
 - [ ] Upstream `main` provides the full behavior.
@@ -38,9 +43,10 @@ Fork evidence:
 - [ZGEnergy/paseo#28](https://github.com/ZGEnergy/paseo/pull/28), merge `6574593b878faafb60eef094b3651bdf854ad064`: inherited theme and blockquote color with focused tests.
 - [ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98): replaces the built-in
   patch with `addMarkdownExtension`, `SvgXml`, and `MarkdownSource` in the plugin SDK, with
-  `plugin-examples/markdown-extension` as the reference. The LaTeX rendering itself moves to the
-  `markdown-math` plugin, which typesets on native. Retirement runs through the upstream SDK PR,
-  not the closed getpaseo/paseo#2562.
+  `plugin-examples/markdown-extension` as the reference. `MarkdownSource` also owns the web copy
+  path, including the caret position drawn content needs before a selection can reach it. The
+  LaTeX rendering itself moves to the `markdown-math` plugin, which typesets on native.
+  Retirement runs through the upstream SDK PR, not the closed getpaseo/paseo#2562.
 
 Upstream evidence:
 
