@@ -24,8 +24,11 @@ The rendering is no longer in this repo. It ships as the `markdown-math` plugin 
 installs it.
 
 Evidence for these behaviors is the plugin's own tests plus a browser end-to-end run against the
-installed plugin. No iOS, Android, or Electron run has happened since the rendering moved out of
-this repo; [ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98) carries that check.
+installed plugin. They hold from `ZGEnergy/dev-tools` `05e1c5c7` onward: before it, malformed
+LaTeX drew an opaque bar rather than falling back to source, and an unpaired `$` ahead of a code
+span swallowed the span. Both now have regression tests. No iOS, Android, or Electron run has
+happened since the rendering moved out of this repo;
+[ZGEnergy/paseo#98](https://github.com/ZGEnergy/paseo/pull/98) carries that check.
 
 Observable behavior:
 
@@ -47,6 +50,9 @@ Fork evidence:
   path, including the caret position drawn content needs before a selection can reach it. The
   LaTeX rendering itself moves to the `markdown-math` plugin, which typesets on native.
   Retirement runs through the upstream SDK PR, not the closed getpaseo/paseo#2562.
+- [ZGEnergy/dev-tools#53](https://github.com/ZGEnergy/dev-tools/pull/53), head `05e1c5c7`: the
+  `markdown-math` plugin itself — parser, MathJax SVG renderer, source fallback, and the
+  `mathjax-full` runtime dependency a Git-source install needs.
 
 Upstream evidence:
 
