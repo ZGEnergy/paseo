@@ -10,7 +10,7 @@ function isEscaped(source: string, position: number): boolean {
   return backslashCount % 2 === 1;
 }
 
-export function findUnescapedDelimiter(source: string, delimiter: string): number {
+function findUnescapedDelimiter(source: string, delimiter: string): number {
   let searchStart = 0;
 
   while (searchStart < source.length) {
