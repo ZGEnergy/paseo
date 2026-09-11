@@ -4,35 +4,6 @@ import MarkdownIt from "markdown-it";
 const markdownBlockParser = new MarkdownIt();
 markdownBlockParser.core.ruler.disable("inline");
 
-// The renderer decides what counts as a definition, so ask the same parser: a block
-// that produces no tokens but registers references is nothing but definitions.
-function isLinkReferenceDefinitionBlock(block: string): boolean {
-  const env: { references?: Record<string, unknown> } = {};
-  const tokens = markdownBlockParser.parse(block, env);
-  return tokens.length === 0 && Object.keys(env.references ?? {}).length > 0;
-}
-
-/**
- * Definitions render nothing and resolve nothing on their own, so a block made only of
- * them would paint an empty row and break every reference that pointed at it. Fold it
- * into the block it belongs to: the one above, or the one below when it leads.
- */
-function foldLinkReferenceDefinitions(blocks: string[]): string[] {
-  const folded: string[] = [];
-  let leading: string[] = [];
-  for (const block of blocks) {
-    if (isLinkReferenceDefinitionBlock(block)) {
-      if (folded.length > 0) folded[folded.length - 1] += `\n\n${block}`;
-      else leading.push(block);
-      continue;
-    }
-    folded.push([...leading, block].join("\n\n"));
-    leading = [];
-  }
-  if (leading.length > 0) folded.push(leading.join("\n\n"));
-  return folded;
-}
-
 function isEscaped(source: string, position: number): boolean {
   let backslashCount = 0;
   for (let index = position - 1; index >= 0 && source[index] === "\\"; index--) {
@@ -70,6 +41,12 @@ export interface SplitMarkdownBlocksOptions {
 
 const registeredBlockDelimitersByHost = new Map<string, readonly MarkdownBlockDelimiter[]>();
 const publishedMarkdownBlockDelimiterHosts = new Set<string>();
+let markdownBlockDelimiterRevision = 0;
+
+/** Monotonic catalog version; row caches re-split when it moves. */
+export function getMarkdownBlockDelimiterRevision(): number {
+  return markdownBlockDelimiterRevision;
+}
 
 /** Installed plugins push their declared pairs here; the plugin registry calls this on publish. */
 export function setMarkdownBlockDelimiters(
@@ -78,6 +55,7 @@ export function setMarkdownBlockDelimiters(
 ): void {
   registeredBlockDelimitersByHost.set(serverId, delimiters);
   publishedMarkdownBlockDelimiterHosts.add(serverId);
+  markdownBlockDelimiterRevision += 1;
 }
 
 export function getMarkdownBlockDelimiters(
@@ -95,10 +73,12 @@ export function clearMarkdownBlockDelimiters(serverId?: string): void {
   if (serverId === undefined) {
     registeredBlockDelimitersByHost.clear();
     publishedMarkdownBlockDelimiterHosts.clear();
+    markdownBlockDelimiterRevision += 1;
     return;
   }
   registeredBlockDelimitersByHost.delete(serverId);
   publishedMarkdownBlockDelimiterHosts.delete(serverId);
+  markdownBlockDelimiterRevision += 1;
 }
 
 function stripMarkdownContainerPrefix(line: string): string {
@@ -153,8 +133,12 @@ function getOpenedBlockDelimiter(
 }
 
 function getFenceDelimiter(line: string) {
-  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
-  return match?.[2] ?? null;
+  const content = stripMarkdownContainerPrefix(line);
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(content);
+  if (!match) {
+    return null;
+  }
+  return { marker: match[2], remainder: match[3] ?? "" };
 }
 
 interface ProtectedBlockState {
@@ -167,36 +151,84 @@ function updateProtectedBlockState(
   line: string,
   state: ProtectedBlockState,
   delimiters: readonly MarkdownBlockDelimiter[],
-): void {
+): boolean {
   if (state.openDelimiterClose) {
     if (findUnescapedDelimiter(line, state.openDelimiterClose) !== -1) {
       state.openDelimiterClose = null;
     }
-    return;
+    return false;
   }
 
   const fenceDelimiter = getFenceDelimiter(line);
   if (state.fenceCharacter) {
     if (
-      fenceDelimiter?.[0] === state.fenceCharacter &&
-      fenceDelimiter.length >= state.fenceLength
+      fenceDelimiter &&
+      fenceDelimiter.marker[0] === state.fenceCharacter &&
+      fenceDelimiter.marker.length >= state.fenceLength &&
+      /^[ \t]*$/.test(fenceDelimiter.remainder)
     ) {
       state.fenceCharacter = null;
       state.fenceLength = 0;
     }
-    return;
+    return false;
   }
 
   if (fenceDelimiter) {
-    state.fenceCharacter = fenceDelimiter[0] as "`" | "~";
-    state.fenceLength = fenceDelimiter.length;
-    return;
+    state.fenceCharacter = fenceDelimiter.marker[0] as "`" | "~";
+    state.fenceLength = fenceDelimiter.marker.length;
+    return false;
   }
 
   const opened = getOpenedBlockDelimiter(line, delimiters);
-  if (opened && !opened.closesOnOpeningLine) {
-    state.openDelimiterClose = opened.close;
+  if (opened) {
+    if (!opened.closesOnOpeningLine) {
+      state.openDelimiterClose = opened.close;
+    }
+    return true;
   }
+  return false;
+}
+
+// The renderer decides what counts as a definition, so ask the same parser: a block
+// that produces no tokens but registers references is nothing but definitions.
+function isLinkReferenceDefinitionBlock(block: string): boolean {
+  const env: { references?: Record<string, unknown> } = {};
+  const tokens = markdownBlockParser.parse(block, env);
+  return tokens.length === 0 && Object.keys(env.references ?? {}).length > 0;
+}
+
+/**
+ * Definitions render nothing and resolve nothing on their own, so a block made only of
+ * them would paint an empty row and break every reference that pointed at it. Fold it
+ * into the block it belongs to: the one above, or the one below when it leads. Blocks
+ * carrying an extension-delimited region are never folded: a region whose lines all
+ * parse as bare definitions (the delimiter API accepts any nonempty pair) would
+ * otherwise lose its protected boundary.
+ */
+function foldLinkReferenceDefinitions(
+  blocks: ReadonlyArray<{ text: string; hasExtensionBlock: boolean }>,
+): string[] {
+  const folded: string[] = [];
+  let leading: string[] = [];
+  for (const block of blocks) {
+    if (block.hasExtensionBlock) {
+      if (leading.length > 0) {
+        folded.push(leading.join("\n\n"));
+        leading = [];
+      }
+      folded.push(block.text);
+      continue;
+    }
+    if (isLinkReferenceDefinitionBlock(block.text)) {
+      if (folded.length > 0) folded[folded.length - 1] += `\n\n${block.text}`;
+      else leading.push(block.text);
+      continue;
+    }
+    folded.push([...leading, block.text].join("\n\n"));
+    leading = [];
+  }
+  if (leading.length > 0) folded.push(leading.join("\n\n"));
+  return folded;
 }
 
 export function splitMarkdownBlocks(
@@ -208,8 +240,9 @@ export function splitMarkdownBlocks(
   }
 
   const delimiters = options.blockDelimiters ?? getMarkdownBlockDelimiters(options.serverId);
-  const blocks: string[] = [];
+  const blocks: Array<{ text: string; hasExtensionBlock: boolean }> = [];
   let currentLines: string[] = [];
+  let currentHasExtensionBlock = false;
   const protectedBlockState: ProtectedBlockState = {
     fenceCharacter: null,
     fenceLength: 0,
@@ -221,11 +254,12 @@ export function splitMarkdownBlocks(
 
   for (const [index, line] of lines.entries()) {
     const isBlankLine = line.trim().length === 0;
-    const isInsideProtectedBlock =
-      protectedBlockState.fenceCharacter !== null ||
-      protectedBlockState.openDelimiterClose !== null;
+    const isInsideExtensionBlock = protectedBlockState.openDelimiterClose !== null;
 
-    if (isBlankLine && (isInsideProtectedBlock || structuralBlankLines.has(index))) {
+    // Extension blocks have no parser token, so their blanks would read as separators;
+    // keep them wholesale. Fence blanks follow the parser's structural verdict, which
+    // also lets upstream's held-back streaming indent stay out of the block.
+    if (isBlankLine && (isInsideExtensionBlock || structuralBlankLines.has(index))) {
       currentLines.push(line);
       continue;
     }
@@ -237,21 +271,26 @@ export function splitMarkdownBlocks(
       continue;
     }
 
+    const isInsideProtectedBlock =
+      protectedBlockState.fenceCharacter !== null || isInsideExtensionBlock;
     if (!isInsideProtectedBlock && sawBlockSeparator) {
-      blocks.push(currentLines.join("\n"));
+      blocks.push({ text: currentLines.join("\n"), hasExtensionBlock: currentHasExtensionBlock });
       currentLines = [];
+      currentHasExtensionBlock = false;
       sawBlockSeparator = false;
     }
 
     currentLines.push(line);
-    updateProtectedBlockState(line, protectedBlockState, delimiters);
+    if (updateProtectedBlockState(line, protectedBlockState, delimiters)) {
+      currentHasExtensionBlock = true;
+    }
   }
 
   if (currentLines.length > 0) {
-    blocks.push(currentLines.join("\n"));
+    blocks.push({ text: currentLines.join("\n"), hasExtensionBlock: currentHasExtensionBlock });
   }
 
-  return foldLinkReferenceDefinitions(blocks.filter((block) => block.length > 0));
+  return foldLinkReferenceDefinitions(blocks.filter((block) => block.text.length > 0));
 }
 
 function getStructuralBlankLines(text: string, lines: string[]): Set<number> {

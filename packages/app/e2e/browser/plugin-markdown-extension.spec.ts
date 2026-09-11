@@ -32,28 +32,30 @@ test("renders assistant markdown through an installed extension", async ({ page 
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await openAgentRoute(page, agent);
 
-    const assistantMessage = page.getByTestId("assistant-message").last();
-    await expect(assistantMessage).toBeVisible({ timeout: 30_000 });
+    const assistantRows = page.getByTestId("assistant-message");
+    await expect(assistantRows.first()).toBeVisible({ timeout: 30_000 });
 
     await test.step("the extension's parser and rules render through the assistant message", async () => {
-      await expect(assistantMessage).toContainText("[a\\_b]", { timeout: 30_000 });
-      await expect(assistantMessage).toContainText("renders as a badge.");
-      await expect(assistantMessage).not.toContainText(INLINE_SOURCE);
-      await expect(assistantMessage).not.toContainText(":::");
+      await expect(assistantRows.first()).toContainText("[a\\_b]", { timeout: 30_000 });
+      await expect(assistantRows.first()).toContainText("renders as a badge.");
+      await expect(assistantRows.first()).not.toContainText(INLINE_SOURCE);
+      // The row splitter honors the declared block delimiter: the unclosed region is
+      // its own row and no row paints the raw fence.
+      await expect(assistantRows.filter({ hasText: ":::" })).toHaveCount(0);
     });
 
     await test.step("a declared block delimiter keeps an unclosed block in one render token", async () => {
       // The block rule sets accessibilityLabel to the inner content. Without blockDelimiters
       // the splitter cuts at the blank line and the label is only "still".
-      await expect(assistantMessage.getByLabel("still\n\nstreaming")).toBeVisible();
+      await expect(assistantRows.last().getByLabel("still\n\nstreaming")).toBeVisible();
     });
 
     await test.step("removing the plugin restores the built-in rendering", async () => {
       await client.removePlugin(PLUGIN_ID);
       // markdown-it's own escape rule eats the backslash once the extension no longer claims
       // the run — the built-in rendering, restored.
-      await expect(assistantMessage).toContainText("::a_b::", { timeout: 30_000 });
-      await expect(assistantMessage).toContainText(":::");
+      await expect(assistantRows.first()).toContainText("::a_b::", { timeout: 30_000 });
+      await expect(assistantRows.filter({ hasText: ":::" }).first()).toBeVisible();
     });
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);

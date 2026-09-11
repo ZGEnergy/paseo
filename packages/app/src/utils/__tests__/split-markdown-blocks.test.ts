@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearMarkdownBlockDelimiters,
+  getMarkdownBlockDelimiterRevision,
   getMarkdownBlockDelimiters,
   setMarkdownBlockDelimiters,
   splitMarkdownBlocks,
@@ -143,6 +144,22 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("does not let an opener inside a blockquoted fence open protection", () => {
+    expect(
+      splitMarkdownBlocks("> ```\n> :::\n> ```\n\nOne\n\nTwo", {
+        blockDelimiters: [{ open: ":::", close: ":::" }],
+      }),
+    ).toEqual(["> ```\n> :::\n> ```", "One", "Two"]);
+  });
+
+  it("does not close a fence when the marker is followed by non-space text", () => {
+    expect(splitMarkdownBlocks("```\ncode\n```still\n```\n\nAfter\n\nDone")).toEqual([
+      "```\ncode\n```still\n```",
+      "After",
+      "Done",
+    ]);
+  });
+
   it("does not protect a pair that no extension declared", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$")).toEqual(["Before", "$$\na", "b\n$$"]);
   });
@@ -225,6 +242,35 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("does not fold a delimiter-protected region that parses as link reference definitions", () => {
+    expect(
+      splitMarkdownBlocks("Before\n\n[d]: https://open\n\n[e]: https://close\n\nAfter", {
+        blockDelimiters: [{ open: "[d]:", close: "[e]:" }],
+      }),
+    ).toEqual(["Before", "[d]: https://open\n\n[e]: https://close", "After"]);
+  });
+
+  it("keeps a leading delimiter-protected definition-only region separate from following prose", () => {
+    expect(
+      splitMarkdownBlocks("[d]: https://open\n\n[e]: https://close\n\nAfter", {
+        blockDelimiters: [{ open: "[d]:", close: "[e]:" }],
+      }),
+    ).toEqual(["[d]: https://open\n\n[e]: https://close", "After"]);
+  });
+
+  it("does not glue a leading definition-only block into a delimiter-protected region", () => {
+    expect(
+      splitMarkdownBlocks(
+        "See [docs][d].\n\n[d]: https://example.com\n\n[k]: https://open\n\n[l]: https://close\n\nAfter",
+        { blockDelimiters: [{ open: "[k]:", close: "[l]:" }] },
+      ),
+    ).toEqual([
+      "See [docs][d].\n\n[d]: https://example.com",
+      "[k]: https://open\n\n[l]: https://close",
+      "After",
+    ]);
+  });
+
   it("treats triple newlines as a split point and filters empty blocks", () => {
     expect(splitMarkdownBlocks("First paragraph\n\n\nSecond paragraph")).toEqual([
       "First paragraph",
@@ -236,6 +282,14 @@ describe("splitMarkdownBlocks", () => {
 describe("setMarkdownBlockDelimiters", () => {
   afterEach(() => {
     clearMarkdownBlockDelimiters();
+  });
+
+  it("bumps the catalog revision on publish and clear", () => {
+    const before = getMarkdownBlockDelimiterRevision();
+    setMarkdownBlockDelimiters("host-rev", MATH_DELIMITERS);
+    expect(getMarkdownBlockDelimiterRevision()).toBeGreaterThan(before);
+    clearMarkdownBlockDelimiters("host-rev");
+    expect(getMarkdownBlockDelimiterRevision()).toBeGreaterThan(before + 1);
   });
 
   it("scopes registered delimiters to the host they were published for", () => {

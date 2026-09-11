@@ -4,6 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
+import MarkdownIt from "markdown-it";
 import { resolveAppVersion } from "@/utils/app-version";
 import {
   clearMarkdownBlockDelimiters,
@@ -11,7 +12,11 @@ import {
 } from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
-import { collectMarkdownBlockDelimiters } from "./markdown-extensions";
+import {
+  applyMarkdownExtensionParsers,
+  collectMarkdownBlockDelimiters,
+  collectMarkdownExtensions,
+} from "./markdown-extensions";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -186,9 +191,16 @@ export class PluginRegistry {
     // The block splitter runs in the stream reducer and the height estimator, which cannot
     // subscribe to this registry, so push per-host delimiters instead of having them pull.
     for (const serverId of this.byHost.keys()) {
+      const extensions = collectMarkdownExtensions(selectHostPlugins(this.snapshot, serverId));
+      const { extensions: installed } = applyMarkdownExtensionParsers(
+        () => new MarkdownIt(),
+        extensions,
+      );
       setMarkdownBlockDelimiters(
         serverId,
-        collectMarkdownBlockDelimiters(selectHostPlugins(this.snapshot, serverId)),
+        collectMarkdownBlockDelimiters(
+          installed.map((extension) => ({ markdownExtensions: [extension] })),
+        ),
       );
     }
     for (const listener of this.listeners) listener();
