@@ -1972,10 +1972,10 @@ export const AssistantMessage = memo(function AssistantMessage({
     workspaceRoot,
   ]);
 
-  const blocks = useMemo(
-    () => splitMarkdownBlocks(revealedMessage, { serverId }),
-    [revealedMessage, markdownExtensions, serverId],
-  );
+  const blocks = useMemo(() => {
+    void markdownExtensions;
+    return splitMarkdownBlocks(revealedMessage, { serverId });
+  }, [revealedMessage, markdownExtensions, serverId]);
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
