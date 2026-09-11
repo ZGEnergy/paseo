@@ -158,6 +158,7 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
+  serverId?: string;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -1149,12 +1150,13 @@ function applyAcceptedTimelinePage(input: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
+  serverId?: string;
 }): {
   tail: StreamItem[];
   head: StreamItem[];
   acknowledgedClientMessageIds: string[];
 } {
-  const { acceptedUnits, payload, currentTail, currentHead, currentCursor } = input;
+  const { acceptedUnits, payload, currentTail, currentHead, currentCursor, serverId } = input;
   if (acceptedUnits.length === 0) {
     return { tail: currentTail, head: currentHead, acknowledgedClientMessageIds: [] };
   }
@@ -1165,6 +1167,7 @@ function applyAcceptedTimelinePage(input: {
       currentTail,
       currentHead,
       currentEndSeq: currentCursor?.endSeq,
+      serverId,
     });
   }
   const olderTail = hydrateStreamState(
@@ -1203,8 +1206,9 @@ function applyTimelineIncrementalPath(args: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
+  serverId?: string;
 }): TimelinePathResult {
-  const { timelineUnits, payload, currentTail, currentHead, currentCursor } = args;
+  const { timelineUnits, payload, currentTail, currentHead, currentCursor, serverId } = args;
   let nextCursor: TimelineCursor | null | undefined = currentCursor;
   let cursorChanged = false;
   const sideEffects: TimelineReducerSideEffect[] = [];
@@ -1240,6 +1244,7 @@ function applyTimelineIncrementalPath(args: {
     currentTail,
     currentHead,
     currentCursor,
+    serverId,
   });
 
   if (cursor && (!currentCursor || !timelineCursorEquals(currentCursor, cursor))) {
@@ -1274,6 +1279,7 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
     initRequestDirection,
     sendingClientMessageIds,
+    serverId,
   } = input;
 
   // ------------------------------------------------------------------
@@ -1406,6 +1412,7 @@ export function processTimelineResponse(
       currentTail,
       currentHead,
       currentCursor,
+      serverId,
     });
   }
 

@@ -122,8 +122,12 @@ function getOpenedBlockDelimiter(
 }
 
 function getFenceDelimiter(line: string) {
-  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
-  return match?.[2] ?? null;
+  const content = stripMarkdownContainerPrefix(line);
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(content);
+  if (!match) {
+    return null;
+  }
+  return { marker: match[2], remainder: match[3] ?? "" };
 }
 
 interface ProtectedBlockState {
@@ -147,8 +151,10 @@ function updateProtectedBlockState(
   const fenceDelimiter = getFenceDelimiter(line);
   if (state.fenceCharacter) {
     if (
-      fenceDelimiter?.[0] === state.fenceCharacter &&
-      fenceDelimiter.length >= state.fenceLength
+      fenceDelimiter &&
+      fenceDelimiter.marker[0] === state.fenceCharacter &&
+      fenceDelimiter.marker.length >= state.fenceLength &&
+      /^[ \t]*$/.test(fenceDelimiter.remainder)
     ) {
       state.fenceCharacter = null;
       state.fenceLength = 0;
@@ -157,8 +163,8 @@ function updateProtectedBlockState(
   }
 
   if (fenceDelimiter) {
-    state.fenceCharacter = fenceDelimiter[0] as "`" | "~";
-    state.fenceLength = fenceDelimiter.length;
+    state.fenceCharacter = fenceDelimiter.marker[0] as "`" | "~";
+    state.fenceLength = fenceDelimiter.marker.length;
     return;
   }
 

@@ -234,7 +234,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         if (current && previous?.status !== subagent.status) {
           timelines.set(
             key,
-            buildTimelineState(current.rows, current.epoch, subagent, current.hasOlder),
+            buildTimelineState(current.rows, current.epoch, subagent, current.hasOlder, serverId),
           );
         }
       }
@@ -262,7 +262,13 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           timelines = new Map(state.timelines);
           timelines.set(
             key,
-            buildTimelineState(current.rows, current.epoch, payload.subagent, current.hasOlder),
+            buildTimelineState(
+              current.rows,
+              current.epoch,
+              payload.subagent,
+              current.hasOlder,
+              serverId,
+            ),
           );
         }
         return { descriptors, timelines, hiddenFromTrack };
