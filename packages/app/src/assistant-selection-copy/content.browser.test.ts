@@ -1,4 +1,7 @@
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { MarkdownSource } from "@/plugins/react-native/markdown-source";
 import { createAssistantSelectionClipboardContent } from "./content.web";
 
 const fixture = `
@@ -37,6 +40,32 @@ function mountMarkdownSourceFixture(source: string): HTMLElement {
     "</div>",
   ].join("");
   document.body.append(host);
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
+function mountRenderedInlineMarkdownSource(source: string): HTMLElement {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      createElement(
+        "div",
+        { "data-testid": "assistant-message" },
+        createElement(
+          "div",
+          null,
+          "Energy is ",
+          createElement(MarkdownSource, { source }, createElement("svg")),
+          " here.",
+        ),
+      ),
+    );
+  });
   const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
   if (!message) {
     throw new Error("Expected assistant message fixture");
@@ -369,10 +398,39 @@ describe("assistant selection copy ranges", () => {
     expect(content?.plainText).toBe(`Energy is ${source} here.`);
   });
 
-  it("preserves the whitespace surrounding a declared markdown source", () => {
-    const message = mountMarkdownSourceFixture("$E = mc^2$");
-    const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
-    expect(content?.plainText).toBe("Energy is $E = mc^2$ here.");
+  it("copies a declared markdown source's own flanking spaces without Turndown padding", () => {
+    const source = " $E$ ";
+    const message = mountMarkdownSourceFixture(source);
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is  $E$  here.",
+    );
+  });
+
+  it("does not let Turndown pad a declared source that already has flanking spaces", () => {
+    const source = " $E$ ";
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="p">',
+      `Energy is<span data-paseo-markdown-source="${escapeAttribute(source)}"><svg></svg></span>here.`,
+      "</div>",
+      "</div>",
+    ].join("");
+    document.body.append(host);
+    const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+    if (!message) {
+      throw new Error("Expected assistant message fixture");
+    }
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is $E$ here.",
+    );
+  });
+
+  it("copies surrounding spaces when inline MarkdownSource sits under a view", () => {
+    const message = mountRenderedInlineMarkdownSource("$E$");
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is $E$ here.",
+    );
   });
 });
 
