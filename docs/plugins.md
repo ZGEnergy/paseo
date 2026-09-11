@@ -230,6 +230,15 @@ Any future drawing primitive lands the same way: export it from the host runtime
 `packages/app/src/plugins/react-native/runtime.ts` and declare it in
 `packages/plugin/src/client/react-native.ts`.
 
+### MarkdownSource
+
+`MarkdownSource` in `packages/app/src/plugins/react-native/markdown-source.tsx` marks non-text
+content, such as a rendered formula, with a copy-source attribute. The attribute alone is not
+enough: Turndown treats a text-free node as blank before it ever reaches a custom rule, and its
+whitespace pass strips the space that follows one. `packages/app/src/assistant-selection-copy/content.web.ts`
+gives the element real text content before Turndown runs, so both problems clear and the
+registered rule reads the attribute back out. See the comment above that loop for the mechanism.
+
 ```ts
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
