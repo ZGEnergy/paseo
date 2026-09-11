@@ -3639,11 +3639,11 @@ describe("processTimelineResponse", () => {
         },
       });
 
-      const messages = [...result.tail, ...result.head].filter(
-        (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
-          item.kind === "assistant_message",
-      );
-      expect(messages.map((message) => message.text)).toEqual([text]);
+      const texts: string[] = [];
+      for (const item of [...result.tail, ...result.head]) {
+        if (item.kind === "assistant_message") texts.push(item.text);
+      }
+      expect(texts).toEqual([text]);
     });
   });
 });
