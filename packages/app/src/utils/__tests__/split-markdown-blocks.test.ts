@@ -143,6 +143,22 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
+  it("does not let an opener inside a blockquoted fence open protection", () => {
+    expect(
+      splitMarkdownBlocks("> ```\n> :::\n> ```\n\nOne\n\nTwo", {
+        blockDelimiters: [{ open: ":::", close: ":::" }],
+      }),
+    ).toEqual(["> ```\n> :::\n> ```", "One", "Two"]);
+  });
+
+  it("does not close a fence when the marker is followed by non-space text", () => {
+    expect(splitMarkdownBlocks("```\ncode\n```still\n```\n\nAfter\n\nDone")).toEqual([
+      "```\ncode\n```still\n```",
+      "After",
+      "Done",
+    ]);
+  });
+
   it("does not protect a pair that no extension declared", () => {
     expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$")).toEqual(["Before", "$$\na", "b\n$$"]);
   });

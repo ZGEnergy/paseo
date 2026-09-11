@@ -1,7 +1,7 @@
 import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { getMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
+import { getMarkdownBlockDelimiters, splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import { pluginRegistry as registry, selectHostPlugins } from "./registry";
 import type { InstalledPlugin } from "./types";
 
@@ -247,6 +247,31 @@ describe("PluginRegistry", () => {
     pluginRegistry.removeHost("host-a");
     expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
     expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
+  });
+
+  it("does not publish delimiters from an extension whose parser throws", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const clientBundle = `(function() {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "broken",
+            blockDelimiters: [{ open: "$$", close: "$$" }],
+            parser: function() { throw new Error("boom"); },
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`;
+
+    pluginRegistry.installCatalog("host-a", [{ id: "broken-plugin", clientBundle }]);
+    expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$", { serverId: "host-a" })).toEqual([
+      "Before",
+      "$$\na",
+      "b\n$$",
+    ]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
