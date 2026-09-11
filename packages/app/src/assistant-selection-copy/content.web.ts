@@ -466,17 +466,14 @@ function restoreMarkdownElements(container: HTMLElement): void {
   // Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
   // strips the space that follows it, and its rule dispatch short-circuits straight to the
   // blank-node replacement, before ever consulting the "declaredMarkdownSource" rule registered
-  // above. Giving the element a real text node here fixes both — Turndown then sees ordinary
-  // non-blank content, preserves the surrounding whitespace, and reaches the addRule, whose
-  // replacement ignores this text and returns the attribute value verbatim, so nothing written
-  // here reaches the copied output. `container` is a clone of the selection (built in
-  // `cloneMarkdownSelection`), so mutating it here is as safe as every other step in this
-  // function already assumes.
+  // above. A fixed non-whitespace sentinel gives Turndown ordinary content so it preserves
+  // surrounding whitespace and reaches the addRule. The rule returns the attribute, not this
+  // text — using `source` as bait would let Turndown treat the source's own flanking spaces as
+  // extra padding. `container` is a clone of the selection (built in `cloneMarkdownSelection`),
+  // so mutating it here is as safe as every other step in this function already assumes.
+  const markdownSourceTurndownSentinel = "x";
   for (const element of container.querySelectorAll(`[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`)) {
-    const source = element.getAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE);
-    if (source !== null) {
-      element.textContent = source;
-    }
+    element.textContent = markdownSourceTurndownSentinel;
   }
 
   // Unwrapping the element above, before Turndown ever runs, would delete the attribute along
