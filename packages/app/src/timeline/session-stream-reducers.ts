@@ -954,6 +954,7 @@ function applyCanonicalForwardUnit(params: {
   head: StreamItem[];
   unit: TimelineUnit;
   epoch: string;
+  serverId?: string;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const { event, timestamp, seqEnd } = params.unit;
   const timelineCursor = { epoch: params.epoch, seq: seqEnd };
@@ -965,6 +966,7 @@ function applyCanonicalForwardUnit(params: {
       timestamp,
       source: "canonical",
       timelineCursor,
+      serverId: params.serverId,
     });
     return {
       tail: applied.tail,
@@ -1019,6 +1021,7 @@ function applyCanonicalForwardUnit(params: {
     timestamp,
     source: "canonical",
     timelineCursor,
+    serverId: params.serverId,
   });
   return {
     tail: applied.tail,
@@ -1033,6 +1036,7 @@ function applyAcceptedForwardTimelineUnits(params: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentEndSeq: number | undefined;
+  serverId?: string;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const reconciled = reconcileOverlappingProjectedStreamItems({
     tail: params.currentTail,
@@ -1051,6 +1055,7 @@ function applyAcceptedForwardTimelineUnits(params: {
       head,
       unit,
       epoch: params.epoch,
+      serverId: params.serverId,
     });
     tail = applied.tail;
     head = applied.head;
@@ -1064,6 +1069,7 @@ function applyAcceptedForwardTimelineUnits(params: {
       epoch: params.epoch,
       currentTail: params.currentTail,
       currentHead: params.currentHead,
+      serverId: params.serverId,
     }),
   };
 }
@@ -1073,13 +1079,20 @@ function deriveCanonicalAcknowledgements(params: {
   epoch: string;
   currentTail: StreamItem[];
   currentHead: StreamItem[];
+  serverId?: string;
 }): string[] {
   let tail = params.currentTail;
   let head = params.currentHead;
   const acknowledged = new Set<string>();
   for (const unit of params.units) {
     if (unit.event.type !== "timeline" || unit.event.item.type !== "user_message") continue;
-    const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
+    const applied = applyCanonicalForwardUnit({
+      tail,
+      head,
+      unit,
+      epoch: params.epoch,
+      serverId: params.serverId,
+    });
     tail = applied.tail;
     head = applied.head;
     for (const clientMessageId of applied.acknowledgedClientMessageIds) {
@@ -1454,6 +1467,7 @@ export interface ProcessAgentStreamEventInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   timestamp: Date;
+  serverId?: string;
 }
 
 export interface ProcessAgentStreamEventOutput {
@@ -1490,6 +1504,7 @@ export interface ProcessAgentStreamEventsInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   isDetached?: boolean;
+  serverId?: string;
 }
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
@@ -1599,6 +1614,7 @@ export function processAgentStreamEvent(
     currentCursor,
     timestamp,
     hasAuthoritativeBaseline = true,
+    serverId,
   } = input;
 
   const sequencing = processTimelineSequencingGate({
@@ -1633,6 +1649,7 @@ export function processAgentStreamEvent(
         source: "live",
         timelineCursor,
         unmatchedUserMessageInsert: "head",
+        serverId,
       });
     } else {
       const overlay = applyStreamEvent({
@@ -1642,6 +1659,7 @@ export function processAgentStreamEvent(
         timestamp,
         source: "live",
         timelineCursor,
+        serverId,
       });
       streamResult = {
         tail: currentTail,
@@ -1658,6 +1676,7 @@ export function processAgentStreamEvent(
       timestamp,
       source: "live",
       timelineCursor,
+      serverId,
     });
   }
   const { tail, head, changedTail, changedHead } = streamResult;
@@ -1712,6 +1731,7 @@ export function processAgentStreamEvents(
       currentCursor: cursor,
       hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
       timestamp: reducerEvent.timestamp,
+      serverId: input.serverId,
     });
 
     tail = result.tail;
@@ -1923,6 +1943,7 @@ export function createSessionAgentStreamReducerQueue(
         currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
         hasAuthoritativeBaseline: timeline.status === "synced",
         isDetached: timeline.status === "synced" && timeline.newer === "available",
+        serverId,
       };
     },
     commit: (agentId, result, events) => {

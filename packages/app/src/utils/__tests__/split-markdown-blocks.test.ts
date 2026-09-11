@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearMarkdownBlockDelimiters,
   getMarkdownBlockDelimiters,
   setMarkdownBlockDelimiters,
   splitMarkdownBlocks,
@@ -191,18 +192,38 @@ describe("splitMarkdownBlocks", () => {
 
 describe("setMarkdownBlockDelimiters", () => {
   afterEach(() => {
-    setMarkdownBlockDelimiters([]);
+    clearMarkdownBlockDelimiters();
   });
 
-  it("supplies the default delimiters for callers that pass none", () => {
-    setMarkdownBlockDelimiters(MATH_DELIMITERS);
-    expect(getMarkdownBlockDelimiters()).toEqual(MATH_DELIMITERS);
-    expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$")).toEqual(["Before", "$$\na\n\nb\n$$"]);
+  it("scopes registered delimiters to the host they were published for", () => {
+    setMarkdownBlockDelimiters("host-a", MATH_DELIMITERS);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual(MATH_DELIMITERS);
+    expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
+    expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$", { serverId: "host-a" })).toEqual([
+      "Before",
+      "$$\na\n\nb\n$$",
+    ]);
+    expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$", { serverId: "host-b" })).toEqual([
+      "Before",
+      "$$\na",
+      "b\n$$",
+    ]);
   });
 
-  it("clears protection when set back to an empty list", () => {
-    setMarkdownBlockDelimiters(MATH_DELIMITERS);
-    setMarkdownBlockDelimiters([]);
-    expect(splitMarkdownBlocks("$$\na\n\nb\n$$")).toEqual(["$$\na", "b\n$$"]);
+  it("clears protection for a host when set back to an empty list", () => {
+    setMarkdownBlockDelimiters("host-a", MATH_DELIMITERS);
+    setMarkdownBlockDelimiters("host-a", []);
+    expect(splitMarkdownBlocks("$$\na\n\nb\n$$", { serverId: "host-a" })).toEqual([
+      "$$\na",
+      "b\n$$",
+    ]);
+  });
+
+  it("closes a ::: pair when an unescaped close appears anywhere on a line", () => {
+    expect(
+      splitMarkdownBlocks(":::\ntext ::: literal\n\nstill inside\n:::", {
+        blockDelimiters: [{ open: ":::", close: ":::" }],
+      }),
+    ).toEqual([":::\ntext ::: literal", "still inside\n:::"]);
   });
 });

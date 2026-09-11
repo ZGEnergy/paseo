@@ -1369,21 +1369,23 @@ function NativeShimmerPeakSvg({ gradientId }: { gradientId: string }) {
 interface AssistantMessageBlockContainerProps {
   block: string;
   marginBottom: number;
+  serverId?: string;
   children: ReactNode;
 }
 
 function AssistantMessageBlockContainer({
   block,
   marginBottom,
+  serverId,
   children,
 }: AssistantMessageBlockContainerProps) {
   const style = useMemo(() => (marginBottom > 0 ? { marginBottom } : undefined), [marginBottom]);
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
       const { width, height } = event.nativeEvent.layout;
-      setAssistantMarkdownBlockHeight({ block, width, height });
+      setAssistantMarkdownBlockHeight({ block, width, height, serverId });
     },
-    [block],
+    [block, serverId],
   );
   return (
     <View style={style} onLayout={isWeb ? handleLayout : undefined}>
@@ -1510,8 +1512,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   // one must not rewrite the other's messages.
   const hostPlugins = useHostPlugins(serverId);
   const markdownExtensions = useMemo(() => collectMarkdownExtensions(hostPlugins), [hostPlugins]);
-  const markdownParser = useMemo(
-    () => applyMarkdownExtensionParsers(createAssistantMarkdownParser(), markdownExtensions),
+  const { parser: markdownParser, extensions: appliedMarkdownExtensions } = useMemo(
+    () => applyMarkdownExtensionParsers(createAssistantMarkdownParser, markdownExtensions),
     [markdownExtensions],
   );
   const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
@@ -1958,11 +1960,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-    return mergeMarkdownExtensionRules(baseRules, markdownExtensions);
+    return mergeMarkdownExtensionRules(baseRules, appliedMarkdownExtensions);
   }, [
+    appliedMarkdownExtensions,
     client,
     fileLinkActions,
-    markdownExtensions,
     markdownParser,
     occurrenceKey,
     phase,
@@ -1971,15 +1973,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   ]);
 
   const blocks = useMemo(
-    () => splitMarkdownBlocks(revealedMessage),
-    // markdownExtensions isn't read inside the callback, but splitMarkdownBlocks reads
-    // module-global delimiters that PluginRegistry.publish() mutates on every
-    // install/remove. The splitter itself takes no extension argument because it also
-    // runs in the stream reducer and height estimator, where no hook is available.
-    // Depending on markdownExtensions here keeps an already-rendered message's block
-    // boundaries in sync when the plugin set changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [revealedMessage, markdownExtensions],
+    () => splitMarkdownBlocks(revealedMessage, { serverId }),
+    [revealedMessage, markdownExtensions, serverId],
   );
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
@@ -2011,6 +2006,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           key={key}
           block={block}
           marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          serverId={serverId}
         >
           <MemoizedMarkdownBlock
             text={block}

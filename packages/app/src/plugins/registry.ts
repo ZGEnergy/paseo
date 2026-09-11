@@ -3,7 +3,10 @@ import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
-import { setMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
+import {
+  clearMarkdownBlockDelimiters,
+  setMarkdownBlockDelimiters,
+} from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 import { collectMarkdownBlockDelimiters } from "./markdown-extensions";
@@ -151,6 +154,7 @@ export class PluginRegistry {
       if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
     }
     this.byHost.delete(serverId);
+    clearMarkdownBlockDelimiters(serverId);
     this.publish();
   }
 
@@ -175,8 +179,13 @@ export class PluginRegistry {
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
     // The block splitter runs in the stream reducer and the height estimator, which cannot
-    // subscribe to this registry, so push the delimiters instead of having them pull.
-    setMarkdownBlockDelimiters(collectMarkdownBlockDelimiters(this.snapshot));
+    // subscribe to this registry, so push per-host delimiters instead of having them pull.
+    for (const serverId of this.byHost.keys()) {
+      setMarkdownBlockDelimiters(
+        serverId,
+        collectMarkdownBlockDelimiters(selectHostPlugins(this.snapshot, serverId)),
+      );
+    }
     for (const listener of this.listeners) listener();
   }
 }
