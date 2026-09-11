@@ -1,12 +1,14 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { createPaseoDaemon } from "./bootstrap.js";
+import { createPaseoDaemon, formatListenTarget } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
 import { getOrCreateServerId } from "./server-id.js";
+
+process.title = "Paseo Daemon";
 
 type SupervisorLifecycleMessage =
   | {
@@ -333,10 +335,7 @@ async function main() {
   try {
     await daemon.start();
     const listenTarget = daemon.getListenTarget();
-    const listen =
-      listenTarget?.type === "tcp"
-        ? `${listenTarget.host}:${listenTarget.port}`
-        : listenTarget?.path;
+    const listen = formatListenTarget(listenTarget);
     if (!listen) {
       throw new Error("Daemon did not expose a listen target after startup");
     }

@@ -1,6 +1,6 @@
-import { open, readFile, stat, unlink, mkdir, utimes } from "node:fs/promises";
+import { open, readFile, unlink, utimes, link, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { ensurePrivateDirectory } from "./private-files.js";
 import { join } from "node:path";
 import { hostname } from "node:os";
 import { z } from "zod";
@@ -39,7 +39,7 @@ export const pidLifecycleSchema = z.object({
 export type PidLifecycle = z.infer<typeof pidLifecycleSchema>;
 
 export const pidLockInfoSchema = z.object({
-  pid: z.number(),
+  pid: z.number().int().positive(),
   startedAt: z.string(),
   hostname: z.string(),
   uid: z.number(),
@@ -53,12 +53,11 @@ export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
 
 export interface AcquirePidLockOptions {
   ownerPid?: number;
-  reclaimStaleDesktopLock?: boolean;
   lifecycle?: PidLifecycle;
 }
 
 export interface UpdatePidLockPatch {
-  listen?: string;
+  listen?: string | null;
   lifecycle?: PidLifecycle;
 }
 
@@ -127,114 +126,55 @@ export class PidLockError extends Error {
   }
 }
 
-// Stale recovery is for abandoned locks, so keep this well above ordinary event-loop stalls.
-const PID_LOCK_STALE_MS = 5 * 60_000;
 const PID_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
 const PID_LOCK_READ_RETRY_ATTEMPTS = 10;
 const PID_LOCK_READ_RETRY_DELAY_MS = 50;
 
-function isPidRunning(pid: number): boolean {
+export function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return isErrnoException(error) && error.code === "EPERM";
   }
 }
 
 function getPidFilePath(paseoHome: string): string {
   return join(paseoHome, "paseo.pid");
 }
-
-async function isPidLockFresh(pidPath: string): Promise<boolean> {
-  try {
-    const lockStat = await stat(pidPath);
-    return lockStat.mtimeMs >= Date.now() - PID_LOCK_STALE_MS;
-  } catch {
-    return false;
-  }
-}
-
 async function touchPidLockFile(pidPath: string): Promise<void> {
   const now = new Date();
   await utimes(pidPath, now, now);
 }
 
 async function readPidLock(pidPath: string): Promise<PidLockInfo | null> {
-  try {
-    const content = await readFile(pidPath, "utf-8");
-    return parsePidLockInfo(JSON.parse(content));
-  } catch {
-    return null;
-  }
-}
-
-function resolveOwnerPid(ownerPid?: number): number {
-  if (typeof ownerPid === "number" && Number.isInteger(ownerPid) && ownerPid > 0) {
-    return ownerPid;
-  }
-  return process.pid;
-}
-
-function canReclaimLiveLock(
-  lock: PidLockInfo,
-  options: AcquirePidLockOptions | undefined,
-): boolean {
-  return (
-    options?.reclaimStaleDesktopLock === true &&
-    (lock.desktopManaged === true || lock.lifecycle?.manager === "desktop")
-  );
-}
-
-function isSamePidLock(left: PidLockInfo, right: PidLockInfo): boolean {
-  return left.pid === right.pid && left.startedAt === right.startedAt;
-}
-
-function createLockHeldError(lock: PidLockInfo): PidLockError {
-  return new PidLockError(
-    `Another Paseo daemon is already running (PID ${lock.pid}, started ${lock.startedAt})`,
-    lock,
-  );
-}
-
-async function clearExistingPidLock(
-  pidPath: string,
-  existingLock: PidLockInfo,
-  lockOwnerPid: number,
-  options: AcquirePidLockOptions | undefined,
-): Promise<"already_owned" | "cleared"> {
-  const lockOwnerRunning = isPidRunning(existingLock.pid);
-  if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
-    await touchPidLockFile(pidPath);
-    return "already_owned";
-  }
-
-  if (lockOwnerRunning) {
-    const reclaimable = canReclaimLiveLock(existingLock, options);
-    if (!reclaimable || (await isPidLockFresh(pidPath))) {
-      throw createLockHeldError(existingLock);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < PID_LOCK_READ_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const content = await readFile(pidPath, "utf-8");
+      const lock = parsePidLockInfo(JSON.parse(content));
+      if (lock) return lock;
+      lastError = new Error("Invalid lock shape");
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") return null;
+      lastError = error;
     }
-
-    // Re-read immediately before unlinking so a heartbeat at the stale boundary wins.
-    const confirmedLock = await readPidLock(pidPath);
-    if (
-      !confirmedLock ||
-      !isSamePidLock(existingLock, confirmedLock) ||
-      (await isPidLockFresh(pidPath))
-    ) {
-      throw new PidLockError("PID lock changed while checking whether it was abandoned");
-    }
+    await new Promise((resolve) => setTimeout(resolve, PID_LOCK_READ_RETRY_DELAY_MS));
   }
-
-  await unlink(pidPath).catch(() => {});
-  return "cleared";
+  throw Object.assign(
+    new PidLockError(`Cannot read daemon state at ${pidPath}: ${String(lastError)}`),
+    { code: "DAEMON_STATE_READ_FAILED" },
+  );
 }
 
 async function writeNewPidLock(pidPath: string, lockInfo: PidLockInfo): Promise<void> {
-  let fd;
+  const temporary = `${pidPath}.new-${process.pid}-${Date.now()}`;
   try {
-    fd = await open(pidPath, "wx");
-    await fd.write(JSON.stringify(lockInfo));
+    await writeFile(temporary, JSON.stringify(lockInfo), { flag: "wx" });
+    // link() both publishes the content atomically (readers never see a partial
+    // lock) and keeps open("wx")'s exclusive-create race semantics, which
+    // rename() would lose by overwriting an existing lock.
+    await link(temporary, pidPath);
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "EEXIST") {
       throw error;
@@ -249,8 +189,51 @@ async function writeNewPidLock(pidPath: string, lockInfo: PidLockInfo): Promise<
     }
     throw new PidLockError("Failed to acquire PID lock due to race condition");
   } finally {
-    await fd?.close();
+    await unlink(temporary).catch(() => {});
   }
+}
+
+function resolveOwnerPid(ownerPid?: number): number {
+  if (typeof ownerPid === "number" && Number.isInteger(ownerPid) && ownerPid > 0) {
+    return ownerPid;
+  }
+  return process.pid;
+}
+
+export function isSamePidLock(left: PidLockInfo, right: PidLockInfo): boolean {
+  return left.pid === right.pid && left.startedAt === right.startedAt;
+}
+
+function createLockHeldError(lock: PidLockInfo): PidLockError {
+  return new PidLockError(
+    `Another Paseo daemon is already running (PID ${lock.pid}, started ${lock.startedAt})`,
+    lock,
+  );
+}
+
+async function clearExistingPidLock(
+  pidPath: string,
+  existingLock: PidLockInfo,
+  lockOwnerPid: number,
+): Promise<"already_owned" | "cleared"> {
+  const lockOwnerRunning = isPidRunning(existingLock.pid);
+  if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
+    await touchPidLockFile(pidPath);
+    return "already_owned";
+  }
+
+  if (lockOwnerRunning) throw createLockHeldError(existingLock);
+  const confirmedLock = await readPidLock(pidPath);
+  if (
+    !confirmedLock ||
+    !isSamePidLock(existingLock, confirmedLock) ||
+    isPidRunning(confirmedLock.pid)
+  ) {
+    throw new PidLockError("PID lock changed while checking whether it was abandoned");
+  }
+
+  await unlink(pidPath).catch(() => {});
+  return "cleared";
 }
 
 export async function acquirePidLock(
@@ -260,10 +243,7 @@ export async function acquirePidLock(
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
 
-  // Ensure paseoHome directory exists
-  if (!existsSync(paseoHome)) {
-    await mkdir(paseoHome, { recursive: true });
-  }
+  ensurePrivateDirectory(paseoHome);
 
   // Try to read existing lock
   const existingLock = await readPidLock(pidPath);
@@ -271,12 +251,13 @@ export async function acquirePidLock(
   // Check if existing lock is stale
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   if (existingLock) {
-    const result = await clearExistingPidLock(pidPath, existingLock, lockOwnerPid, options);
+    const result = await clearExistingPidLock(pidPath, existingLock, lockOwnerPid);
     if (result === "already_owned") {
       return;
     }
   }
 
+  // Create new lock with exclusive flag
   const lockInfo: PidLockInfo = {
     pid: lockOwnerPid,
     startedAt: new Date().toISOString(),
@@ -416,7 +397,7 @@ export async function updatePidLock(
 
 export async function releasePidLock(
   paseoHome: string,
-  options?: { ownerPid?: number },
+  options?: { ownerPid?: number; startedAt?: string },
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
@@ -424,7 +405,10 @@ export async function releasePidLock(
     // Only remove if it's our lock
     const content = await readFile(pidPath, "utf-8");
     const lock = parsePidLockInfo(JSON.parse(content));
-    if (lock?.pid === lockOwnerPid) {
+    if (
+      lock?.pid === lockOwnerPid &&
+      (options?.startedAt === undefined || lock.startedAt === options.startedAt)
+    ) {
       await unlink(pidPath);
     }
   } catch {
