@@ -1,7 +1,9 @@
 import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { pluginRegistry as registry } from "./registry";
+import { getMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
+import { pluginRegistry as registry, selectHostPlugins } from "./registry";
+import type { InstalledPlugin } from "./types";
 
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -219,5 +221,44 @@ describe("PluginRegistry", () => {
 
     expect(() => pluginRegistry.removeHost("host-a")).not.toThrow();
     expect(pluginRegistry.getSnapshot()).toEqual([]);
+  });
+
+  it("pushes declared block delimiters into the markdown splitter on publish", () => {
+    const clientBundle = `(function() {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "math",
+            blockDelimiters: [{ open: "$$", close: "$$" }, { open: "\\\\[", close: "\\\\]" }],
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`;
+
+    pluginRegistry.installCatalog("host-a", [{ id: "math-plugin", clientBundle }]);
+    expect(getMarkdownBlockDelimiters()).toEqual([
+      { open: "$$", close: "$$" },
+      { open: "\\[", close: "\\]" },
+    ]);
+
+    pluginRegistry.removeHost("host-a");
+    expect(getMarkdownBlockDelimiters()).toEqual([]);
+  });
+});
+
+describe("selectHostPlugins", () => {
+  const alpha = { serverId: "alpha", id: "math" } as InstalledPlugin;
+  const beta = { serverId: "beta", id: "math" } as InstalledPlugin;
+
+  // Markdown extensions rewrite assistant messages, so with two hosts connected a plugin
+  // installed on one must not reach the other's messages.
+  it("returns only the named host's plugins", () => {
+    expect(selectHostPlugins([alpha, beta], "alpha")).toEqual([alpha]);
+  });
+
+  it("returns nothing when the host is unknown", () => {
+    expect(selectHostPlugins([alpha, beta], undefined)).toEqual([]);
+    expect(selectHostPlugins([alpha, beta], "")).toEqual([]);
   });
 });

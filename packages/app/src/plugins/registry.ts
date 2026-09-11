@@ -3,8 +3,10 @@ import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
+import { setMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import { collectMarkdownBlockDelimiters } from "./markdown-extensions";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -95,6 +97,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          markdownExtensions: [],
         };
         runtime = this.dependencies.createRuntime(installation, options.client);
         const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
@@ -171,6 +174,9 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    // The block splitter runs in the stream reducer and the height estimator, which cannot
+    // subscribe to this registry, so push the delimiters instead of having them pull.
+    setMarkdownBlockDelimiters(collectMarkdownBlockDelimiters(this.snapshot));
     for (const listener of this.listeners) listener();
   }
 }
@@ -194,6 +200,21 @@ export function useInstalledPlugin(serverId: string, pluginId: string): Installe
       (plugin) => plugin.serverId === serverId && plugin.id === pluginId,
     ) ?? null
   );
+}
+
+/** No host means no plugins, not every host's. */
+export function selectHostPlugins(
+  installed: readonly InstalledPlugin[],
+  serverId: string | undefined,
+): InstalledPlugin[] {
+  if (!serverId) return [];
+  return installed.filter((plugin) => plugin.serverId === serverId);
+}
+
+/** Plugins installed on one host. */
+export function useHostPlugins(serverId: string | undefined): InstalledPlugin[] {
+  const installed = useInstalledPlugins();
+  return useMemo(() => selectHostPlugins(installed, serverId), [installed, serverId]);
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {

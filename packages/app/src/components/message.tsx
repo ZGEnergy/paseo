@@ -66,6 +66,12 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { useHostPlugins } from "@/plugins/registry";
+import {
+  applyMarkdownExtensionParsers,
+  collectMarkdownExtensions,
+  mergeMarkdownExtensionRules,
+} from "@/plugins/markdown-extensions";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
@@ -1500,7 +1506,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
-  const markdownParser = useMemo(createAssistantMarkdownParser, []);
+  // Scoped to the host this message came from: with two hosts connected, a plugin installed on
+  // one must not rewrite the other's messages.
+  const hostPlugins = useHostPlugins(serverId);
+  const markdownExtensions = useMemo(() => collectMarkdownExtensions(hostPlugins), [hostPlugins]);
+  const markdownParser = useMemo(
+    () => applyMarkdownExtensionParsers(createAssistantMarkdownParser(), markdownExtensions),
+    [markdownExtensions],
+  );
   const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
   // rate instead of in whatever lumps the daemon's coalescing window produced.
@@ -1519,7 +1532,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   });
 
   const markdownRules = useMemo<RenderRules>(() => {
-    return {
+    const baseRules: RenderRules = {
       heading1: (
         node: ASTNode,
         children: ReactNode[],
@@ -1945,9 +1958,29 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
+    return mergeMarkdownExtensionRules(baseRules, markdownExtensions);
+  }, [
+    client,
+    fileLinkActions,
+    markdownExtensions,
+    markdownParser,
+    occurrenceKey,
+    phase,
+    serverId,
+    workspaceRoot,
+  ]);
 
-  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
+  const blocks = useMemo(
+    () => splitMarkdownBlocks(revealedMessage),
+    // markdownExtensions isn't read inside the callback, but splitMarkdownBlocks reads
+    // module-global delimiters that PluginRegistry.publish() mutates on every
+    // install/remove. The splitter itself takes no extension argument because it also
+    // runs in the stream reducer and height estimator, where no hook is available.
+    // Depending on markdownExtensions here keeps an already-rendered message's block
+    // boundaries in sync when the plugin set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [revealedMessage, markdownExtensions],
+  );
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
