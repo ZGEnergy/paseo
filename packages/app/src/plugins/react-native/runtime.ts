@@ -1,4 +1,5 @@
 import { SvgXml } from "react-native-svg";
+import { MarkdownSource } from "./markdown-source";
 import { Icon } from "../icons";
 import { Modal } from "./modal";
 import { ScrollView, FlatList } from "./scroll-view";
@@ -17,4 +18,5 @@ export const pluginReactNativeRuntime = {
   useRevealedText,
   useToast,
   SvgXml,
+  MarkdownSource,
 };
