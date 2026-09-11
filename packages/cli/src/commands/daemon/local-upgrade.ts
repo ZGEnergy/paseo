@@ -14,21 +14,30 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   cliLaunchDescriptorSchema,
+  editPersistedConfig,
   getPidLockInfo,
   isAttestedCliLifecycle,
   loadConfig,
+  readDaemonInstance,
+  stopDaemonInstance,
   type CliLaunchDescriptor,
   type PidLifecycle,
   type PidLockInfo,
 } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
-import {
-  resolveLocalDaemonState,
-  stopLocalDaemon,
-  type StopLocalDaemonResult,
-} from "./local-daemon.js";
+import { resolveLocalPaseoHome } from "./local-daemon.js";
+
+function isPidRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "EPERM";
+  }
+}
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -89,7 +98,7 @@ export interface UpgradeDaemonDependencies {
   stop(
     home: string,
     options: { timeoutMs: number; force: boolean },
-  ): Promise<StopLocalDaemonResult>;
+  ): Promise<Awaited<ReturnType<typeof stopDaemonInstance>>>;
   start(input: {
     home: string;
     executable: string;
@@ -205,37 +214,32 @@ const defaultNix: UpgradeNixDependencies = {
   },
 };
 
-function isPidRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return typeof error === "object" && error !== null && "code" in error && error.code === "EPERM";
-  }
+// The daemon reads launch values from persisted config in managed mode, so the
+// descriptor is written to config before spawning the staged closure's CLI.
+function persistLaunchDescriptor(home: string, descriptor: CliLaunchDescriptor): void {
+  editPersistedConfig(home, "daemon.listen", { value: descriptor.listen });
+  editPersistedConfig(home, "daemon.relay.enabled", { value: descriptor.relayEnabled });
+  editPersistedConfig(home, "daemon.relay.useTls", { value: descriptor.relayUseTls });
+  editPersistedConfig(home, "daemon.mcp.enabled", { value: descriptor.mcpEnabled });
+  editPersistedConfig(home, "daemon.mcp.injectIntoAgents", {
+    value: descriptor.mcpInjectIntoAgents,
+  });
+  editPersistedConfig(home, "features.webUi.enabled", { value: descriptor.webUiEnabled });
+  editPersistedConfig(home, "daemon.hostnames", { value: descriptor.hostnames });
 }
 
-function descriptorHostnames(hostnames: CliLaunchDescriptor["hostnames"]): string {
-  if (hostnames === null) return "false";
-  if (hostnames === true) return "true";
-  return hostnames.join(",");
-}
-
-function descriptorArgs(descriptor: CliLaunchDescriptor): string[] {
-  const args = ["daemon", "start", "--listen", descriptor.listen];
-  args.push(descriptor.relayEnabled ? "--relay" : "--no-relay");
-  args.push(descriptor.relayUseTls ? "--relay-use-tls" : "--no-relay-use-tls");
-  args.push(descriptor.mcpEnabled ? "--mcp" : "--no-mcp");
-  args.push(descriptor.mcpInjectIntoAgents ? "--inject-mcp" : "--no-inject-mcp");
-  args.push(descriptor.webUiEnabled ? "--web-ui" : "--no-web-ui");
-  args.push("--hostnames", descriptorHostnames(descriptor.hostnames));
-  return args;
+async function resolveListenTarget(home: string): Promise<string> {
+  const instance = await readDaemonInstance(home);
+  if (instance?.listen) return instance.listen;
+  return loadConfig(resolveLocalPaseoHome(home), { env: {} }).listen;
 }
 
 function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
   return {
     readPidLock: getPidLockInfo,
-    stop: async (home, options) => stopLocalDaemon({ home, ...options }),
+    stop: (home, options) => stopDaemonInstance(home, options),
     async start(input) {
+      persistLaunchDescriptor(input.home, input.descriptor);
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         PASEO_HOME: input.home,
@@ -244,28 +248,23 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
         PASEO_LIFECYCLE_SOURCE_REVISION: input.sourceRevision,
         PASEO_LIFECYCLE_CLOSURE_ROOT: input.closureRoot,
       };
-      const child = spawn(input.executable, descriptorArgs(input.descriptor), {
+      const child = spawn(input.executable, ["daemon", "start", "--home", input.home], {
         detached: true,
         env,
         stdio: ["ignore", "ignore", "ignore"],
       });
       await new Promise<void>((resolve, reject) => {
-        const onSpawn = () => resolve();
-        const onError = (error: Error) => reject(error);
-        child.once("spawn", onSpawn);
-        child.once("error", onError);
+        child.once("spawn", resolve);
+        child.once("error", (error: Error) => reject(error));
       });
       child.unref();
       const cleanup = async (): Promise<void> => {
         if (child.exitCode !== null || child.signalCode !== null) return;
         child.kill("SIGTERM");
-        await Promise.race([
-          new Promise<void>((resolve) => child.once("exit", () => resolve())),
-          new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, 1000);
-            timer.unref();
-          }),
-        ]);
+        const exited = new Promise<void>((resolve) => {
+          child.once("exit", () => resolve());
+        });
+        await Promise.race([exited, delay(1000)]);
       };
       return {
         pid: child.pid ?? null,
@@ -274,8 +273,10 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
       };
     },
     async probe({ home, timeoutMs }) {
-      const state = resolveLocalDaemonState({ home });
-      const client = await tryConnectToDaemon({ host: state.listen, timeout: timeoutMs });
+      const client = await tryConnectToDaemon({
+        target: { kind: "endpoint", host: await resolveListenTarget(home) },
+        timeout: timeoutMs,
+      });
       if (!client) return null;
       try {
         const status = await client.getDaemonStatus({ timeout: timeoutMs });
@@ -305,8 +306,10 @@ function createDefaultDaemonDependencies(): UpgradeDaemonDependencies {
       }
     },
     async endpointReachable({ home, timeoutMs }) {
-      const state = resolveLocalDaemonState({ home });
-      const client = await tryConnectToDaemon({ host: state.listen, timeout: timeoutMs });
+      const client = await tryConnectToDaemon({
+        target: { kind: "endpoint", host: await resolveListenTarget(home) },
+        timeout: timeoutMs,
+      });
       if (!client) return false;
       await client.close().catch(() => undefined);
       return true;

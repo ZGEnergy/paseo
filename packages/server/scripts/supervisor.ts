@@ -52,6 +52,7 @@ interface SupervisorOptions {
     env?: NodeJS.ProcessEnv;
   } | null;
   onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
+  onWorkerExit?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
   logFile?: SupervisorLogFileOptions;
@@ -136,6 +137,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   let restarting = false;
   let shuttingDown = false;
   let exiting = false;
+  let lifecycleFailed = false;
+  let publication = Promise.resolve();
   let forceKillTimer: NodeJS.Timeout | null = null;
   const logStream = createSupervisorLogStream(options.logFile);
 
@@ -251,6 +254,8 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const currentChild = child;
+    let reachedReady = false;
+    // Serialize endpoint writes with exit/clear before allowing another worker to spawn.
     const heartbeat = setInterval(() => {
       const message: SupervisorHeartbeatMessage = { type: "paseo:supervisor-heartbeat" };
       if (currentChild.connected) {
@@ -283,19 +288,24 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
     child.on("message", (msg: unknown) => {
       const lifecycleMessage = parseLifecycleMessage(msg);
-      if (!lifecycleMessage) {
+      if (!lifecycleMessage || child !== currentChild) {
         return;
       }
 
       if (lifecycleMessage.type === "paseo:ready") {
+        reachedReady = true;
         writeLifecycleLog("Worker ready", {
           listen: lifecycleMessage.listen,
           serverId: lifecycleMessage.serverId,
         });
-        Promise.resolve(options.onWorkerReady?.(lifecycleMessage)).catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          log(`Worker ready callback failed: ${message}`);
-        });
+        publication = publication
+          .then(() => options.onWorkerReady?.(lifecycleMessage))
+          .catch((error) => {
+            lifecycleFailed = true;
+            const message = error instanceof Error ? error.message : String(error);
+            log(`Worker ready callback failed: ${message}`);
+            requestShutdown("endpoint_publication_failed");
+          });
         return;
       }
 
@@ -311,35 +321,57 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       requestRestart(reason);
     });
 
+    child.on("error", (error) => {
+      lifecycleFailed = true;
+      log(`Worker spawn failed: ${error.message}`);
+      exitSupervisor(1);
+    });
+
     child.on("exit", (code, signal) => {
       clearInterval(heartbeat);
       clearForceKillTimer();
-      const exitDescriptor = describeExit(code, signal);
-      writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
+      child = null;
+      publication = publication
+        .then(() => options.onWorkerExit?.())
+        .catch((error) => {
+          lifecycleFailed = true;
+          log(`Worker exit callback failed: ${String(error)}`);
+        });
+      void publication.then(() => {
+        const exitDescriptor = describeExit(code, signal);
+        writeLifecycleLog("Worker exited", { code, signal, exit: exitDescriptor });
 
-      if (shuttingDown) {
-        log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
-        exitSupervisor(0);
+        if (lifecycleFailed || (!reachedReady && !shuttingDown)) {
+          log(`Worker exited before successful readiness (${exitDescriptor}). Supervisor exiting.`);
+          exitSupervisor(1);
+          return;
+        }
+
+        if (shuttingDown) {
+          log(`Worker exited (${exitDescriptor}). Supervisor shutting down.`);
+          exitSupervisor(0);
+          return;
+        }
+
+        const crashed =
+          restartOnCrash &&
+          ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
+
+        if (restarting || crashed) {
+          restarting = false;
+          log(
+            crashed
+              ? `Worker crashed (${exitDescriptor}). Restarting worker...`
+              : `Worker exited (${exitDescriptor}). Restarting worker...`,
+          );
+          spawnWorker();
+          return;
+        }
+
+        log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
+        exitSupervisor(typeof code === "number" ? code : 1);
         return;
-      }
-
-      const crashed =
-        restartOnCrash &&
-        ((code !== 0 && code !== null) || (signal !== null && signal !== "SIGTERM"));
-
-      if (restarting || crashed) {
-        restarting = false;
-        log(
-          crashed
-            ? `Worker crashed (${exitDescriptor}). Restarting worker...`
-            : `Worker exited (${exitDescriptor}). Restarting worker...`,
-        );
-        spawnWorker();
-        return;
-      }
-
-      log(`Worker exited (${exitDescriptor}). Supervisor exiting.`);
-      exitSupervisor(typeof code === "number" ? code : 1);
+      });
     });
   };
 
@@ -397,7 +429,10 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog("Supervisor shutdown requested", { reason });
     log(`${reason}. Stopping worker...`);
     if (!child) {
-      exitSupervisor(0);
+      void publication.then(() => {
+        exitSupervisor(lifecycleFailed ? 1 : 0);
+        return;
+      });
       return;
     }
     requestWorkerShutdown(reason);
