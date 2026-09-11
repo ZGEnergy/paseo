@@ -1,7 +1,12 @@
 import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { getMarkdownBlockDelimiters, splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  clearMarkdownBlockDelimiters,
+  getMarkdownBlockDelimiters,
+  hasPublishedMarkdownBlockDelimiters,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
 import { pluginRegistry as registry, selectHostPlugins } from "./registry";
 import type { InstalledPlugin } from "./types";
 
@@ -72,6 +77,7 @@ function installedPluginIds(): string[] {
 afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
+  clearMarkdownBlockDelimiters();
   Reflect.deleteProperty(globalThis, "__pluginCleanups");
 });
 
@@ -247,6 +253,21 @@ describe("PluginRegistry", () => {
     pluginRegistry.removeHost("host-a");
     expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
     expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
+  });
+
+  it("publishes empty delimiters when a host never had a catalog", () => {
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(false);
+    pluginRegistry.removeHost("host-a");
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
+  });
+
+  it("keeps an empty host published after teardown", () => {
+    pluginRegistry.installCatalog("host-a", []);
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    pluginRegistry.removeHost("host-a");
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
   });
 
   it("does not publish delimiters from an extension whose parser throws", () => {
