@@ -41,10 +41,12 @@ describe("collectMarkdownExtensions", () => {
 });
 
 describe("applyMarkdownExtensionParsers", () => {
-  it("applies each parser to the same instance and returns it", () => {
-    const parser = new MarkdownIt();
-    const result = applyMarkdownExtensionParsers(parser, [shout, quiet]);
-    expect(result).toBe(parser);
+  it("applies each parser to the created instance and returns successful extensions", () => {
+    const { parser, extensions } = applyMarkdownExtensionParsers(
+      () => new MarkdownIt(),
+      [shout, quiet],
+    );
+    expect(extensions).toEqual([shout, quiet]);
     const inline = parser.parse("hello", {}).find((token) => token.type === "inline");
     expect(inline?.content).toBe("HELLO");
   });
@@ -94,9 +96,10 @@ describe("isolating a failing extension", () => {
       },
     };
 
-    applyMarkdownExtensionParsers(new MarkdownIt(), [broken, healthy]);
+    const installed = applyMarkdownExtensionParsers(() => new MarkdownIt(), [broken, healthy]);
 
     expect(applied).toEqual(["healthy"]);
+    expect(installed.extensions.map((extension) => extension.id)).toEqual(["healthy"]);
     expect(warn).toHaveBeenCalledWith(
       "[Plugins] Markdown extension broken failed to install",
       expect.any(Error),
@@ -117,6 +120,69 @@ describe("isolating a failing extension", () => {
     const rules = mergeMarkdownExtensionRules({}, [broken]);
 
     expect(rules.paragraph?.({} as never, [], [], {} as never, {} as never)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      "[Plugins] Markdown rule broken/paragraph failed",
+      expect.any(Error),
+    );
+  });
+
+  it("drops an extension whose parser mutates then throws, and keeps paragraphs", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const broken: PluginMarkdownExtension = {
+      id: "broken",
+      parser: (markdown) => {
+        markdown.block.ruler.at("paragraph", () => false);
+        throw new Error("boom");
+      },
+      rules: { paragraph: () => "broken" },
+      blockDelimiters: [{ open: "$$", close: "$$" }],
+    };
+    const healthy: PluginMarkdownExtension = {
+      id: "healthy",
+      parser: (markdown) => {
+        markdown.core.ruler.push("healthy", (state) => {
+          for (const token of state.tokens) {
+            if (token.type === "inline") token.content = `${token.content}!`;
+          }
+          return true;
+        });
+      },
+    };
+
+    const { parser, extensions } = applyMarkdownExtensionParsers(
+      () => new MarkdownIt(),
+      [broken, healthy],
+    );
+
+    expect(extensions.map((extension) => extension.id)).toEqual(["healthy"]);
+    expect(
+      collectMarkdownBlockDelimiters(
+        extensions.map((extension) => ({ markdownExtensions: [extension] })),
+      ),
+    ).toEqual([]);
+    const tokens = parser.parse("hello", {});
+    expect(tokens.some((token) => token.type === "paragraph_open")).toBe(true);
+    expect(tokens.find((token) => token.type === "inline")?.content).toBe("hello!");
+    expect(warn).toHaveBeenCalledWith(
+      "[Plugins] Markdown extension broken failed to install",
+      expect.any(Error),
+    );
+  });
+
+  it("falls back to the previous rule when an overriding rule throws", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const broken: PluginMarkdownExtension = {
+      id: "broken",
+      rules: {
+        paragraph: () => {
+          throw new Error("boom");
+        },
+      },
+    };
+
+    const rules = mergeMarkdownExtensionRules({ paragraph: () => "base" }, [broken]);
+
+    expect(rules.paragraph?.({} as never, [], [], {} as never, {} as never)).toBe("base");
     expect(warn).toHaveBeenCalledWith(
       "[Plugins] Markdown rule broken/paragraph failed",
       expect.any(Error),

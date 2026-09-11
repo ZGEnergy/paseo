@@ -22,33 +22,49 @@ export function collectMarkdownBlockDelimiters(
 }
 
 /**
- * Applies every extension parser to `parser` in registration order and returns it. A parser that
- * throws loses only its own extension: this runs while rendering an assistant message, so an
- * escaping error would otherwise reach the root boundary and replace the whole app.
+ * Applies every extension parser in registration order. A parser that throws loses only its own
+ * extension, including any ruler mutations it made before throwing: this runs while rendering an
+ * assistant message, so an escaping error would otherwise reach the root boundary and replace the
+ * whole app.
  */
 export function applyMarkdownExtensionParsers(
-  parser: MarkdownIt,
+  createParser: () => MarkdownIt,
   extensions: readonly PluginMarkdownExtension[],
-): MarkdownIt {
+): { parser: MarkdownIt; extensions: PluginMarkdownExtension[] } {
+  const applied: PluginMarkdownExtension[] = [];
+  let parser = createParser();
   for (const extension of extensions) {
-    if (!extension.parser) continue;
+    if (!extension.parser) {
+      applied.push(extension);
+      continue;
+    }
     try {
       parser.use(extension.parser);
+      applied.push(extension);
     } catch (error) {
       console.warn(`[Plugins] Markdown extension ${extension.id} failed to install`, error);
+      parser = createParser();
+      for (const previous of applied) {
+        if (previous.parser) parser.use(previous.parser);
+      }
     }
   }
-  return parser;
+  return { parser, extensions: applied };
 }
 
-/** A rule that throws renders nothing rather than taking the message down with it. */
-function isolateRule(extensionId: string, name: string, rule: MarkdownRenderRule) {
+/** A rule that throws falls back to the previous rule rather than taking the message down with it. */
+function isolateRule(
+  extensionId: string,
+  name: string,
+  rule: MarkdownRenderRule,
+  previous: MarkdownRenderRule | undefined,
+) {
   return (...args: Parameters<MarkdownRenderRule>) => {
     try {
       return rule(...args);
     } catch (error) {
       console.warn(`[Plugins] Markdown rule ${extensionId}/${name} failed`, error);
-      return null;
+      return previous ? previous(...args) : null;
     }
   };
 }
@@ -61,7 +77,10 @@ export function mergeMarkdownExtensionRules(
   const merged: RenderRules = { ...baseRules };
   for (const extension of extensions) {
     for (const [name, rule] of Object.entries(extension.rules ?? {})) {
-      if (rule) merged[name] = isolateRule(extension.id, name, rule);
+      if (rule) {
+        const previous = merged[name];
+        merged[name] = isolateRule(extension.id, name, rule, previous);
+      }
     }
   }
   return merged;
