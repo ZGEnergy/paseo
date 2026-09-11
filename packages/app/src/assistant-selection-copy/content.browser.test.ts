@@ -23,6 +23,27 @@ function mountFixture(): HTMLElement {
   return message;
 }
 
+/**
+ * A rendered formula (`MarkdownSource`, wrapping a non-text SVG) declares the Markdown it
+ * copies as via `data-paseo-markdown-source`, inline in prose like the real renderer produces.
+ */
+function mountMarkdownSourceFixture(source: string): HTMLElement {
+  const host = document.createElement("div");
+  host.innerHTML = [
+    '<div data-testid="assistant-message">',
+    '<div data-paseo-markdown-tag="p">',
+    `Energy is <span data-paseo-markdown-source="${escapeAttribute(source)}"><svg></svg></span> here.`,
+    "</div>",
+    "</div>",
+  ].join("");
+  document.body.append(host);
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
 function fixtureElement<T extends Element = HTMLElement>(
   root: ParentNode,
   selector: string,
@@ -339,6 +360,19 @@ describe("assistant selection copy ranges", () => {
     expect(copiedMarkdown(selectText(blockCode, 0, textNode(blockCode).length))).toBe(
       "const answer = true;",
     );
+  });
+
+  it("copies a declared markdown source verbatim, without Markdown-escaping its backslashes", () => {
+    const source = "$\\displaystyle \\frac{a}{b}$";
+    const message = mountMarkdownSourceFixture(source);
+    const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+    expect(content?.plainText).toBe(`Energy is ${source} here.`);
+  });
+
+  it("preserves the whitespace surrounding a declared markdown source", () => {
+    const message = mountMarkdownSourceFixture("$E = mc^2$");
+    const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+    expect(content?.plainText).toBe("Energy is $E = mc^2$ here.");
   });
 });
 
