@@ -4,10 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import MarkdownIt from "markdown-it";
 import { resolveAppVersion } from "@/utils/app-version";
-import {
-  clearMarkdownBlockDelimiters,
-  setMarkdownBlockDelimiters,
-} from "@/utils/split-markdown-blocks";
+import { setMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 import {
@@ -153,14 +150,23 @@ export class PluginRegistry {
 
   removeHost(serverId: string): void {
     const installed = this.byHost.get(serverId);
-    if (!installed) return;
-    for (const plugin of installed) this.dispose(plugin);
-    for (const key of this.evaluationErrors.keys()) {
-      if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
+    if (installed) {
+      for (const plugin of installed) this.dispose(plugin);
+      for (const key of this.evaluationErrors.keys()) {
+        if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
+      }
+      this.byHost.delete(serverId);
+      this.publish();
     }
-    this.byHost.delete(serverId);
-    clearMarkdownBlockDelimiters(serverId);
-    this.publish();
+    // Unsupported, disconnected, and torn-down hosts have no catalog to wait for.
+    // Publish empty delimiters so completed-block promotion keeps running.
+    this.acknowledgeEmptyHost(serverId);
+  }
+
+  /** Pending is only while a catalog load is in flight. */
+  acknowledgeEmptyHost(serverId: string): void {
+    if (this.byHost.has(serverId)) return;
+    setMarkdownBlockDelimiters(serverId, []);
   }
 
   private dispose(plugin: InstalledPlugin): void {
