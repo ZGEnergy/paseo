@@ -2,22 +2,23 @@
 
 ## Active capability count
 
-**4 waiting.** No capability is `upstream-candidate`: live upstream `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232` does not provide every required behavior for any capability. No capability is retired.
+**4 waiting.** No capability is `upstream-candidate`: live upstream `main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` does not provide every required behavior for any capability. No capability is retired.
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `4449d7d10796df89acd1cd442a76791904b8b65c`
-- fork upstream mirror: `origin/main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
-- upstream: `getpaseo/paseo` `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`
-- review-period fork merges [#97](https://github.com/ZGEnergy/paseo/pull/97), [#100](https://github.com/ZGEnergy/paseo/pull/100), and [#102](https://github.com/ZGEnergy/paseo/pull/102) only refreshed this ledger; no new downstream product capability landed
+- fork integration: `origin/internal/main` at `7af8d4a623cc6cd1f97848dfdb0edb48cb88dc22`
+- fork upstream mirror: `origin/main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f`
+- upstream: `getpaseo/paseo` `main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f`
+- review-period fork merges [#103](https://github.com/ZGEnergy/paseo/pull/103) (ledger refresh) and [#104](https://github.com/ZGEnergy/paseo/pull/104) (downstream sync of `main` `d7c7044df`) landed no new downstream product capability; the in-flight sync resolution [#106](https://github.com/ZGEnergy/paseo/pull/106) (upstream #4575 daemon lifecycle refactor vs the fork's local daemon-upgrade feature, an excluded operation) likewise lands none
+- the fork upstream mirror moved from `d7c7044df` to `f22a37e613` this review period (7 upstream commits: workspace title width, Linux desktop sandboxing, selected-instance daemon lifecycle, app error recovery, subscription observer isolation, cold diff speedup, hidden browser screenshot throttling — none touch the four capabilities below)
 
 ## LaTeX assistant-message rendering
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 Observable behavior:
 
@@ -37,13 +38,13 @@ Upstream evidence:
 
 - [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562), inspected head `e784d3b91a63add5a8fa3889e282d35da86e7c78`, closed unmerged in favor of a timeline-plugin approach that does not provide built-in assistant-message rendering.
 - [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1), inspected head `51505218784075ceb73d59408ee78305c02ca1b0`, remains open atop the closed rendering candidate and supplies inherited-color handling.
-- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`.
+- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` (re-verified 2026-09-11; the only `katex` match is an unrelated generated mermaid runtime file).
 
 ## OMP task and subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 Observable behavior:
 
@@ -63,13 +64,13 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, closed unmerged in favor of [#2777](https://github.com/getpaseo/paseo/pull/2777). That merged change aggregates native-child activity into workspace status while explicitly leaving parent lifecycle unchanged; it does not add bounded completion, yield settlement, or interruption-safe children.
-- Upstream `main` still completes from provider state alone at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`: `completeTurnAfterProviderIdle` polls `runtimeSession.getState()` until `!isStreaming && !isCompacting` with swallowed state errors, a fixed 10ms default retry, and no elapsed-time or failure budget, and no child-activity awareness; interruption still terminalizes running children.
+- Upstream `main` still completes from provider state alone at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` (re-verified 2026-09-11): `completeTurnAfterProviderIdle` polls `runtimeSession.getState()` until `!isStreaming && !isCompacting` with swallowed state errors, a fixed scheduler retry, and no elapsed-time or failure budget, and no child-activity awareness; interruption still terminalizes running children.
 
 ## OMP Ask option descriptions
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 Observable behavior:
 
@@ -85,14 +86,14 @@ Fork evidence:
 
 Upstream evidence:
 
-- [getpaseo/paseo#3628](https://github.com/getpaseo/paseo/pull/3628), inspected head `b1f831e5dc4b148a44135f0b44c3b7afe7c8411c`, remains open and carries the description candidate.
-- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232`.
+- [getpaseo/paseo#3628](https://github.com/getpaseo/paseo/pull/3628), inspected head `b1f831e5dc4b148a44135f0b44c3b7afe7c8411c`, remains open (unchanged since 2026-08-27) and carries the description candidate.
+- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` (re-verified 2026-09-11; zero matches).
 
 ## Claude background and autonomous subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-10
+Last reviewed: 2026-09-11
 
 Observable behavior:
 
@@ -110,7 +111,8 @@ Upstream evidence:
 
 - [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, closed unmerged in favor of [#3394](https://github.com/getpaseo/paseo/pull/3394), merge `42245d139ad1f3ba93c3e691e9e0a7971169ea79`.
 - Upstream active-turn steering, commit `f9e1def954550ec50c45ffa435f5fe1d57fc48f3`, and archive-continuation commit `613cbbe9ef7b461bdd7e859cf2303598100ad924` cover explicit steering, stale interrupt-window frames, and archived workspaces. They do not replace default follow-up admission during an autonomous turn or completed task-notification settlement.
-- Upstream `main` at `d7c7044dfc91d1d18721dc8757ac3bb913d8c232` routes `task_notification` through `appendTaskNotificationEvents`, which appends provider-subagent events only and never settles a leftover autonomous turn; follow-up admission falls through `steerActiveTurn`, so a compatible background child neither keeps the parent admitted nor blocks replacement.
+- New open upstream PRs adjacent to this capability, neither merged and neither carrying the missing behaviors as of 2026-09-11: [getpaseo/paseo#4594](https://github.com/getpaseo/paseo/pull/4594) "claude: spare background subagents from an interrupt, and let one be stopped" (head `49b03bcd23d56e4119e3b8f56e89a0b7214574f6`) and [getpaseo/paseo#4633](https://github.com/getpaseo/paseo/pull/4633) "fix(server): forward steerActiveTurn through wrapSessionProvider" (head `1132cdb0e6e50f4780c8c69e68c9c11e8500ef7b`).
+- Upstream `main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` (re-verified 2026-09-11) routes `task_notification` through `appendTaskNotificationEvents`, which appends provider-subagent events only and never settles a leftover autonomous turn; `steerActiveTurn` returns `unavailable` without a live foreground stream, so follow-up admission still replaces the turn and a compatible background child neither keeps the parent admitted nor blocks replacement.
 
 ## Retired history
 
