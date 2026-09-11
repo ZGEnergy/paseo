@@ -60,7 +60,7 @@ function collectProbeColors(markdown: string, theme: Theme): (string | undefined
     [probeExtension],
   );
   const renderer = new AstRenderer(rules, createMarkdownStyles(theme));
-  const markdownIt = applyMarkdownExtensionParsers(createAssistantMarkdownParser(), [
+  const { parser: markdownIt } = applyMarkdownExtensionParsers(createAssistantMarkdownParser, [
     probeExtension,
   ]);
 

@@ -34,17 +34,40 @@ export interface MarkdownBlockDelimiter {
 
 export interface SplitMarkdownBlocksOptions {
   blockDelimiters?: readonly MarkdownBlockDelimiter[];
+  serverId?: string;
 }
 
-let registeredBlockDelimiters: readonly MarkdownBlockDelimiter[] = [];
+const registeredBlockDelimitersByHost = new Map<string, readonly MarkdownBlockDelimiter[]>();
+const publishedMarkdownBlockDelimiterHosts = new Set<string>();
 
 /** Installed plugins push their declared pairs here; the plugin registry calls this on publish. */
-export function setMarkdownBlockDelimiters(delimiters: readonly MarkdownBlockDelimiter[]): void {
-  registeredBlockDelimiters = delimiters;
+export function setMarkdownBlockDelimiters(
+  serverId: string,
+  delimiters: readonly MarkdownBlockDelimiter[],
+): void {
+  registeredBlockDelimitersByHost.set(serverId, delimiters);
+  publishedMarkdownBlockDelimiterHosts.add(serverId);
 }
 
-export function getMarkdownBlockDelimiters(): readonly MarkdownBlockDelimiter[] {
-  return registeredBlockDelimiters;
+export function getMarkdownBlockDelimiters(
+  serverId: string | undefined,
+): readonly MarkdownBlockDelimiter[] {
+  if (!serverId) return [];
+  return registeredBlockDelimitersByHost.get(serverId) ?? [];
+}
+
+export function hasPublishedMarkdownBlockDelimiters(serverId: string | undefined): boolean {
+  return serverId !== undefined && publishedMarkdownBlockDelimiterHosts.has(serverId);
+}
+
+export function clearMarkdownBlockDelimiters(serverId?: string): void {
+  if (serverId === undefined) {
+    registeredBlockDelimitersByHost.clear();
+    publishedMarkdownBlockDelimiterHosts.clear();
+    return;
+  }
+  registeredBlockDelimitersByHost.delete(serverId);
+  publishedMarkdownBlockDelimiterHosts.delete(serverId);
 }
 
 function stripMarkdownContainerPrefix(line: string): string {
@@ -153,7 +176,7 @@ export function splitMarkdownBlocks(
     return [];
   }
 
-  const delimiters = options.blockDelimiters ?? registeredBlockDelimiters;
+  const delimiters = options.blockDelimiters ?? getMarkdownBlockDelimiters(options.serverId);
   const blocks: string[] = [];
   let currentLines: string[] = [];
   const protectedBlockState: ProtectedBlockState = {

@@ -237,13 +237,16 @@ describe("PluginRegistry", () => {
       })`;
 
     pluginRegistry.installCatalog("host-a", [{ id: "math-plugin", clientBundle }]);
-    expect(getMarkdownBlockDelimiters()).toEqual([
+    pluginRegistry.installCatalog("host-b", []);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([
       { open: "$$", close: "$$" },
       { open: "\\[", close: "\\]" },
     ]);
+    expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
 
     pluginRegistry.removeHost("host-a");
-    expect(getMarkdownBlockDelimiters()).toEqual([]);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
+    expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
   });
 });
 
