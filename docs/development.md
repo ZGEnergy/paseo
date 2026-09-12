@@ -660,6 +660,21 @@ Activation journal state is recovered before a later upgrade if the upgrader is 
 see only the bounded restart reconnect window; pairing, agents, worktrees, and configuration remain in
 the existing `$PASEO_HOME`.
 
+When the lifecycle PID belongs to a user systemd unit, the upgrade restarts that unit, so a daemon
+that dies during startup writes nothing to `$PASEO_HOME/daemon.log`; `journalctl --user -u <unit>`
+holds the reason. A failed attestation over an empty daemon log is this case, not a silent daemon.
+
+The unit lives outside the repository, so nothing updates its `ExecStart` alongside the closure. When
+that command still passes a launch flag `rejectRemovedLaunchFlags`
+(`packages/cli/src/commands/daemon/local-daemon.ts`) now refuses, the unit fails on the first restart
+after activation, exhausts `StartLimitBurst`, and stays down; rollback restores the links but cannot
+revive a unit systemd has given up on. Fix `ExecStart`, `systemctl --user reset-failed`, and start it
+again.
+
+Start a hand-run daemon from a plain login shell. One started inside another unit's cgroup — a
+terminal that is itself a service — makes the next upgrade resolve that service as the unit to
+restart.
+
 Use the global `--host` option to point the CLI at a different daemon:
 
 ```bash
