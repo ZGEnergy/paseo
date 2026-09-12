@@ -87,7 +87,7 @@ export declare const SvgXml: ComponentType<{
 export interface MarkdownSourceProps {
   /** The markdown this element copies as when a web selection includes it. */
   source: string;
-  /** Render a block (`View`) instead of an inline run (`Text`). Default false. */
+  /** Render a block instead of an inline run. Default false. Native always uses View. */
   display?: boolean;
   style?: StyleProp<ViewStyle | TextStyle>;
   children?: ReactNode;
