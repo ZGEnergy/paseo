@@ -825,12 +825,12 @@ plugins get; a plugin bundle cannot import `react-native-svg` directly.
 declares the markdown it copies as. A web drag selection that includes the wrapper copies
 `source` verbatim; the turn copy button is unaffected because it copies the raw message.
 
-| Prop       | Type        | Required | Behavior                                                    |
-| ---------- | ----------- | -------- | ----------------------------------------------------------- |
-| `source`   | `string`    | Yes      | Copied in place of the children.                            |
-| `display`  | `boolean`   | No       | `true` renders a block; default renders an inline text run. |
-| `style`    | style       | No       | Applied to the wrapper.                                     |
-| `children` | `ReactNode` | No       | What the user sees. Omit when the wrapper is only a source. |
+| Prop       | Type        | Required | Behavior                                                              |
+| ---------- | ----------- | -------- | --------------------------------------------------------------------- |
+| `source`   | `string`    | Yes      | Copied in place of the children.                                      |
+| `display`  | `boolean`   | No       | `true` renders a block; default is inline. Native always uses `View`. |
+| `style`    | style       | No       | Applied to the wrapper.                                               |
+| `children` | `ReactNode` | No       | What the user sees. Omit when the wrapper is only a source.           |
 
 ## Timeline items
 
