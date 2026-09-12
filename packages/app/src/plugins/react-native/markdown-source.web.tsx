@@ -39,7 +39,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
   if (display) {
     return (
       <View
-        style={[SELECT_AS_UNIT as ViewStyle, style as StyleProp<ViewStyle>]}
+        style={[style as StyleProp<ViewStyle>, SELECT_AS_UNIT as ViewStyle]}
         dataSet={dataSet}
         accessibilityLabel={source}
       >
@@ -51,7 +51,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
   const sourceAttribute = { [MARKDOWN_COPY_SOURCE_ATTRIBUTE]: source };
   return (
     <span
-      style={StyleSheet.flatten([SELECT_AS_UNIT, style]) as CSSProperties}
+      style={StyleSheet.flatten([style, SELECT_AS_UNIT]) as CSSProperties}
       {...sourceAttribute}
       aria-label={source}
     >

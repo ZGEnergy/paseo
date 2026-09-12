@@ -18,7 +18,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
   if (display) {
     return (
       <View
-        style={[SELECT_AS_UNIT as ViewStyle, style as StyleProp<ViewStyle>]}
+        style={[style as StyleProp<ViewStyle>, SELECT_AS_UNIT as ViewStyle]}
         dataSet={dataSet}
         accessibilityLabel={source}
       >
@@ -28,7 +28,7 @@ export function MarkdownSource({ source, display = false, style, children }: Mar
   }
   return (
     <Text
-      style={[SELECT_AS_UNIT as TextStyle, style as StyleProp<TextStyle>]}
+      style={[style as StyleProp<TextStyle>, SELECT_AS_UNIT as TextStyle]}
       dataSet={dataSet}
       accessibilityLabel={source}
     >
