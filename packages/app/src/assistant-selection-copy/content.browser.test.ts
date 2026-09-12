@@ -460,6 +460,26 @@ describe("assistant selection copy ranges", () => {
       source,
     );
   });
+
+  it("keeps unit selection when the caller style sets userSelect", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        createElement(
+          MarkdownSource,
+          { source: "$E$", style: { userSelect: "none" } },
+          createElement("svg"),
+        ),
+      );
+    });
+    const wrapper = host.querySelector("[data-paseo-markdown-source]");
+    if (!wrapper) {
+      throw new Error("Expected markdown source wrapper");
+    }
+    expect(getComputedStyle(wrapper).userSelect).toBe("all");
+  });
 });
 
 /**
