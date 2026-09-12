@@ -140,7 +140,6 @@ The fork removed the host KaTeX path in [ZGEnergy/paseo#110](https://github.com/
 
 Prior fork evidence, kept only as history: [#6](https://github.com/ZGEnergy/paseo/pull/6), [#21](https://github.com/ZGEnergy/paseo/pull/21), [#28](https://github.com/ZGEnergy/paseo/pull/28).
 
-
 ## Excluded fork operations
 
 These keep the fork safe and maintainable but do not count as product-capability retirement blockers:
