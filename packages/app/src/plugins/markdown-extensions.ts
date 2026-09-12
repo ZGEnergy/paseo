@@ -46,13 +46,10 @@ export function applyMarkdownExtensionParsers(
   let parser = createParser();
   for (const extension of extensions) {
     if (!tryInstallParser(parser, extension)) {
-      parser = createParser();
-      const surviving: PluginMarkdownExtension[] = [];
-      for (const previous of applied) {
-        if (tryInstallParser(parser, previous)) surviving.push(previous);
-      }
+      const rebuilt = applyMarkdownExtensionParsers(createParser, applied);
+      parser = rebuilt.parser;
       applied.length = 0;
-      applied.push(...surviving);
+      applied.push(...rebuilt.extensions);
       continue;
     }
     applied.push(extension);
