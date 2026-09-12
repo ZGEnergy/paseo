@@ -73,6 +73,26 @@ function mountRenderedInlineMarkdownSource(source: string): HTMLElement {
   return message;
 }
 
+function mountRenderedDisplayMarkdownSource(source: string): HTMLElement {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      createElement(
+        "div",
+        { "data-testid": "assistant-message" },
+        createElement(MarkdownSource, { source, display: true }, createElement("svg")),
+      ),
+    );
+  });
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
 function fixtureElement<T extends Element = HTMLElement>(
   root: ParentNode,
   selector: string,
@@ -430,6 +450,14 @@ describe("assistant selection copy ranges", () => {
     const message = mountRenderedInlineMarkdownSource("$E$");
     expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
       "Energy is $E$ here.",
+    );
+  });
+
+  it("copies a display MarkdownSource as its source", () => {
+    const source = "$$E=mc^2$$";
+    const message = mountRenderedDisplayMarkdownSource(source);
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      source,
     );
   });
 });
