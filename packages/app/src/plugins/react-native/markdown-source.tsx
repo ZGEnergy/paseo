@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import { View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { MARKDOWN_COPY_SOURCE_DATASET_KEY } from "@/assistant-selection-copy/markup";
 
 const SELECT_AS_UNIT = { userSelect: "all" } as const;
@@ -11,28 +11,17 @@ export interface MarkdownSourceProps {
   children?: ReactNode;
 }
 
-// Native has no caret and no DOM selection. Inline content stays a nested Text; display
-// content is a View so it lays out as a block.
-export function MarkdownSource({ source, display = false, style, children }: MarkdownSourceProps) {
+// Native has no caret and no DOM selection. The host is always View so a plugin can pass
+// view-backed children (SvgXml) without nesting them under Text, which iOS and Android reject.
+export function MarkdownSource({ source, style, children }: MarkdownSourceProps) {
   const dataSet = useMemo(() => ({ [MARKDOWN_COPY_SOURCE_DATASET_KEY]: source }), [source]);
-  if (display) {
-    return (
-      <View
-        style={[SELECT_AS_UNIT as ViewStyle, style as StyleProp<ViewStyle>]}
-        dataSet={dataSet}
-        accessibilityLabel={source}
-      >
-        {children}
-      </View>
-    );
-  }
   return (
-    <Text
-      style={[SELECT_AS_UNIT as TextStyle, style as StyleProp<TextStyle>]}
+    <View
+      style={[style as StyleProp<ViewStyle>, SELECT_AS_UNIT as ViewStyle]}
       dataSet={dataSet}
       accessibilityLabel={source}
     >
       {children}
-    </Text>
+    </View>
   );
 }
