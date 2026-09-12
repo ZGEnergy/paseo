@@ -90,7 +90,7 @@ export interface MarkdownSourceProps {
   /** Render a block (`View`) instead of an inline run (`Text`). Default false. */
   display?: boolean;
   style?: StyleProp<ViewStyle | TextStyle>;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 /** Wraps non-text content so a web drag selection copies `source` verbatim. */

@@ -8,7 +8,7 @@ export interface MarkdownSourceProps {
   source: string;
   display?: boolean;
   style?: StyleProp<ViewStyle | TextStyle>;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 // Native has no caret and no DOM selection. Inline content stays a nested Text; display
