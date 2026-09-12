@@ -132,7 +132,14 @@ Upstream evidence:
 
 ## Retired history
 
-None.
+### Host LaTeX assistant-message rendering
+
+**Status:** superseded 2026-09-11. Not `retired` (upstream never shipped it) and not `waiting`.
+
+The fork removed the host KaTeX path in [ZGEnergy/paseo#110](https://github.com/ZGEnergy/paseo/pull/110), merge `7c8e3ef939795f4eb7afd00b9855018d2566e4da`. Formula rendering is a plugin. Do not restore this as an active capability. Do not wait on [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562) or [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1). The replacement is the plugin assistant-markdown surface.
+
+Prior fork evidence, kept only as history: [#6](https://github.com/ZGEnergy/paseo/pull/6), [#21](https://github.com/ZGEnergy/paseo/pull/21), [#28](https://github.com/ZGEnergy/paseo/pull/28).
+
 
 ## Excluded fork operations
 
