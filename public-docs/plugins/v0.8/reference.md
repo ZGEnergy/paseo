@@ -819,6 +819,8 @@ plugins get; a plugin bundle cannot import `react-native-svg` directly.
 | `height` | `number \| string` | No       | Rendered height.                             |
 | `color`  | `string`           | No       | Value of `currentColor` inside the document. |
 
+### MarkdownSource
+
 `MarkdownSource` wraps content that has no text of its own, such as a rendered formula, and
 declares the markdown it copies as. A web drag selection that includes the wrapper copies
 `source` verbatim; the turn copy button is unaffected because it copies the raw message.
@@ -828,7 +830,7 @@ declares the markdown it copies as. A web drag selection that includes the wrapp
 | `source`   | `string`    | Yes      | Copied in place of the children.                            |
 | `display`  | `boolean`   | No       | `true` renders a block; default renders an inline text run. |
 | `style`    | style       | No       | Applied to the wrapper.                                     |
-| `children` | `ReactNode` | Yes      | What the user sees.                                         |
+| `children` | `ReactNode` | No       | What the user sees. Omit when the wrapper is only a source. |
 
 ## Timeline items
 
