@@ -21,7 +21,7 @@ export interface MarkdownSourceProps {
   source: string;
   display?: boolean;
   style?: StyleProp<ViewStyle | TextStyle>;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 // Wrapped content is usually drawn rather than written — a rendered formula's SVG, say — so the
