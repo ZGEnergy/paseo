@@ -60,7 +60,7 @@ function mountRenderedInlineMarkdownSource(source: string): HTMLElement {
           "div",
           null,
           "Energy is ",
-          createElement(MarkdownSource, { source, children: createElement("svg") }),
+          createElement(MarkdownSource, { source }, createElement("svg")),
           " here.",
         ),
       ),
