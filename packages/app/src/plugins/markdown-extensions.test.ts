@@ -136,6 +136,37 @@ describe("isolating a failing extension", () => {
     );
   });
 
+  it("discards rebuild mutations when a previously accepted parser throws", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let installs = 0;
+    const flaky: PluginMarkdownExtension = {
+      id: "flaky",
+      parser: (markdown) => {
+        installs += 1;
+        markdown.block.ruler.at("paragraph", () => false);
+        if (installs > 1) throw new Error("rebuild boom");
+      },
+    };
+    const broken: PluginMarkdownExtension = {
+      id: "broken",
+      parser: () => {
+        throw new Error("boom");
+      },
+    };
+
+    const { parser, extensions } = applyMarkdownExtensionParsers(
+      () => new MarkdownIt(),
+      [flaky, broken],
+    );
+
+    expect(extensions).toEqual([]);
+    expect(parser.parse("hello", {}).some((token) => token.type === "paragraph_open")).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      "[Plugins] Markdown extension flaky failed to install",
+      expect.any(Error),
+    );
+  });
+
   it("renders nothing for a rule that throws instead of failing the message", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const broken: PluginMarkdownExtension = {
