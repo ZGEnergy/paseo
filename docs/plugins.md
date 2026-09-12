@@ -426,6 +426,18 @@ must be at most 64 KiB; the daemon rejects a larger append instead of storing a 
 be rendered intact. The daemon advertises this RPC through
 `server_info.features.pluginTimelineItems`.
 
+## Contribute markdown extensions
+
+`addMarkdownExtension` is the client contribution for assistant markdown: a markdown-it plugin,
+render rules merged after the built-ins, and block delimiters the streaming splitter protects.
+`packages/app/src/plugins/markdown-extensions.ts` composes installed extensions; `AssistantMessage`
+applies them, and `PluginRegistry.publish()` pushes the delimiters into
+`packages/app/src/utils/split-markdown-blocks.ts` because the splitter also runs in the stream
+reducer and the height estimator, where no hook is available.
+
+See the [public reference](../public-docs/plugins/v0.8/reference.md#markdown-extensions) and
+`plugin-examples/markdown-extension`, which exercises every field of the contribution.
+
 ## Contribute client slash commands
 
 `addSlashCommand` registers an agent- or workspace-context command in the composer. The
