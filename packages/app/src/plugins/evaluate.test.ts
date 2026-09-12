@@ -597,6 +597,26 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
+  it("provides MarkdownSource through @getpaseo/plugin/client/react-native", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { MarkdownSource } = require("@getpaseo/plugin/client/react-native");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof MarkdownSource !== "function" && typeof MarkdownSource !== "object") {
+            throw new Error("MarkdownSource is not provided");
+          }
+          plugin.addSurface("main", function Surface() { return null; });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
   it("keeps shared and client runtime exports separate", () => {
     expect(() =>
       evaluatePluginClientBundle(
