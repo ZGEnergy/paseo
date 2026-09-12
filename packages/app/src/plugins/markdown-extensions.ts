@@ -25,8 +25,19 @@ export function collectMarkdownBlockDelimiters(
  * Applies every extension parser in registration order. A parser that throws loses only its own
  * extension, including any ruler mutations it made before throwing: this runs while rendering an
  * assistant message, so an escaping error would otherwise reach the root boundary and replace the
- * whole app.
+ * whole app. Rebuild of previously accepted parsers uses the same catch.
  */
+function tryInstallParser(parser: MarkdownIt, extension: PluginMarkdownExtension): boolean {
+  if (!extension.parser) return true;
+  try {
+    parser.use(extension.parser);
+    return true;
+  } catch (error) {
+    console.warn(`[Plugins] Markdown extension ${extension.id} failed to install`, error);
+    return false;
+  }
+}
+
 export function applyMarkdownExtensionParsers(
   createParser: () => MarkdownIt,
   extensions: readonly PluginMarkdownExtension[],
@@ -34,20 +45,17 @@ export function applyMarkdownExtensionParsers(
   const applied: PluginMarkdownExtension[] = [];
   let parser = createParser();
   for (const extension of extensions) {
-    if (!extension.parser) {
-      applied.push(extension);
+    if (!tryInstallParser(parser, extension)) {
+      parser = createParser();
+      const surviving: PluginMarkdownExtension[] = [];
+      for (const previous of applied) {
+        if (tryInstallParser(parser, previous)) surviving.push(previous);
+      }
+      applied.length = 0;
+      applied.push(...surviving);
       continue;
     }
-    try {
-      parser.use(extension.parser);
-      applied.push(extension);
-    } catch (error) {
-      console.warn(`[Plugins] Markdown extension ${extension.id} failed to install`, error);
-      parser = createParser();
-      for (const previous of applied) {
-        if (previous.parser) parser.use(previous.parser);
-      }
-    }
+    applied.push(extension);
   }
   return { parser, extensions: applied };
 }
