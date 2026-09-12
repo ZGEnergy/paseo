@@ -2,43 +2,59 @@
 
 ## Active capability count
 
-**4 waiting.** No capability is `upstream-candidate`: live upstream `main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` does not provide every required behavior for any capability. No capability is retired.
+**4 waiting.** No capability is `upstream-candidate`. No capability is `retired`. Host LaTeX
+rendering is **superseded** (see history) and is not one of the four.
 
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-11 (OMP / Ask / Claude unchanged). Plugin-surface replacement: 2026-09-11.
+
+The four waiting capabilities are:
+
+1. Plugin assistant-markdown surface
+2. OMP task and subagent lifecycle correctness
+3. OMP Ask option descriptions
+4. Claude background and autonomous subagent lifecycle correctness
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `7af8d4a623cc6cd1f97848dfdb0edb48cb88dc22`
-- fork upstream mirror: `origin/main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f`
-- upstream: `getpaseo/paseo` `main` at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f`
-- review-period fork merges [#103](https://github.com/ZGEnergy/paseo/pull/103) (ledger refresh) and [#104](https://github.com/ZGEnergy/paseo/pull/104) (downstream sync of `main` `d7c7044df`) landed no new downstream product capability; the in-flight sync resolution [#106](https://github.com/ZGEnergy/paseo/pull/106) (upstream #4575 daemon lifecycle refactor vs the fork's local daemon-upgrade feature, an excluded operation) likewise lands none
-- the fork upstream mirror moved from `d7c7044df` to `f22a37e613` this review period (7 upstream commits: workspace title width, Linux desktop sandboxing, selected-instance daemon lifecycle, app error recovery, subscription observer isolation, cold diff speedup, hidden browser screenshot throttling — none touch the four capabilities below)
+- fork integration: `origin/internal/main` at `1d38366aa5c3362e8f6802c12843730895877716`
+- fork upstream mirror: `origin/main` at `fa93c4290eaa87ae58452ab6e2012f85ae6e0c6b`
+- upstream: `getpaseo/paseo` `main` at `fa93c4290eaa87ae58452ab6e2012f85ae6e0c6b`
+- capability 1 is no longer host KaTeX. The fork removed that path in [#110](https://github.com/ZGEnergy/paseo/pull/110) and replaced it with host plugin APIs in [#108](https://github.com/ZGEnergy/paseo/pull/108), [#109](https://github.com/ZGEnergy/paseo/pull/109), and [#111](https://github.com/ZGEnergy/paseo/pull/111). Do not treat [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562) as an upstream candidate.
 
-## LaTeX assistant-message rendering
+## Plugin assistant-markdown surface
 
 **Status:** `waiting`
 
 Last reviewed: 2026-09-11
 
+What this is: the host exposes `SvgXml`, `addMarkdownExtension`, and `MarkdownSource` so a plugin
+can extend the assistant markdown row without forking the renderer. Formula rendering is a plugin,
+not a fork product feature.
+
+What we are waiting for: those three APIs on getpaseo `main`.
+
 Observable behavior:
 
-- [x] Assistant messages parse inline, display, fenced, and streamed math without treating currency, code, escaped delimiters, or incomplete input as formulas.
-- [x] Web and Electron render accessible KaTeX and show malformed input as readable source.
-- [x] Native renders readable selectable source instead of failing.
-- [x] Math inherits readable theme and blockquote text color.
-- [ ] Upstream `main` provides the full behavior.
+- [x] Plugins import `SvgXml` from `@getpaseo/plugin/client/react-native`. The host supplies it; a plugin bundle cannot import `react-native-svg`.
+- [x] Plugins call `addMarkdownExtension({ id, parser?, rules?, blockDelimiters? })`. The host still renders the assistant row (anchors, file links, images, selection, streaming).
+- [x] A throwing parser or render rule loses only that extension.
+- [x] `MarkdownSource` makes a text-free drawing copy as `source` on a web drag selection.
+- [ ] Upstream `main` provides `SvgXml`, `addMarkdownExtension`, and `MarkdownSource`.
 
 Fork evidence:
 
-- [ZGEnergy/paseo#6](https://github.com/ZGEnergy/paseo/pull/6), merge `79e27189c7eda9315d30bd44690ac032b3832e05`: parser, streaming protection, web renderer, native fallback, and tests.
-- [ZGEnergy/paseo#21](https://github.com/ZGEnergy/paseo/pull/21), merge `db0df8107ae90ac5ba495c79286d9c83b1cadcc4`: import verification and provenance follow-up; no additional runtime behavior.
-- [ZGEnergy/paseo#28](https://github.com/ZGEnergy/paseo/pull/28), merge `6574593b878faafb60eef094b3651bdf854ad064`: inherited theme and blockquote color with focused tests.
+- [ZGEnergy/paseo#108](https://github.com/ZGEnergy/paseo/pull/108), merge `099f9f8b22baa7f62d054d56f28524be7f8fe415`: host `SvgXml`.
+- [ZGEnergy/paseo#109](https://github.com/ZGEnergy/paseo/pull/109), merge `fe9c6897e672412646651405edbd1ba277b7febc`: `addMarkdownExtension`.
+- [ZGEnergy/paseo#111](https://github.com/ZGEnergy/paseo/pull/111), merge `b43b4841009ec7308b79361c43ca7caec90a7765`: `MarkdownSource` and web copy-source.
+- [ZGEnergy/paseo#115](https://github.com/ZGEnergy/paseo/pull/115): open follow-up so a parser that throws on rebuild is dropped instead of escaping.
 
 Upstream evidence:
 
-- [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562), inspected head `e784d3b91a63add5a8fa3889e282d35da86e7c78`, closed unmerged in favor of a timeline-plugin approach that does not provide built-in assistant-message rendering.
-- [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1), inspected head `51505218784075ceb73d59408ee78305c02ca1b0`, remains open atop the closed rendering candidate and supplies inherited-color handling.
-- Upstream `main` contains no corresponding math parser, renderer, native fallback, KaTeX dependency, or focused tests at `f22a37e613e965c8ebc02e1f5565e21fd72eaf2f` (re-verified 2026-09-11; the only `katex` match is an unrelated generated mermaid runtime file).
+- [getpaseo/paseo#4749](https://github.com/getpaseo/paseo/pull/4749) `SvgXml`, open.
+- [getpaseo/paseo#4750](https://github.com/getpaseo/paseo/pull/4750) `addMarkdownExtension`, open, stacked on 4749.
+- [getpaseo/paseo#4752](https://github.com/getpaseo/paseo/pull/4752) `MarkdownSource`, open, stacked on 4750.
+- Merge order is 4749, then 4750, then 4752. None of these add a formula renderer to core.
+- [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562) is closed and is not a candidate for this capability.
 
 ## OMP task and subagent lifecycle correctness
 
@@ -116,7 +132,13 @@ Upstream evidence:
 
 ## Retired history
 
-None.
+### Host LaTeX assistant-message rendering
+
+**Status:** superseded 2026-09-11. Not `retired` (upstream never shipped it) and not `waiting`.
+
+The fork removed the host KaTeX path in [ZGEnergy/paseo#110](https://github.com/ZGEnergy/paseo/pull/110), merge `7c8e3ef939795f4eb7afd00b9855018d2566e4da`. Formula rendering is a plugin. Do not restore this as an active capability. Do not wait on [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562) or [ekalvi/paseo#1](https://github.com/ekalvi/paseo/pull/1). The replacement is the plugin assistant-markdown surface.
+
+Prior fork evidence, kept only as history: [#6](https://github.com/ZGEnergy/paseo/pull/6), [#21](https://github.com/ZGEnergy/paseo/pull/21), [#28](https://github.com/ZGEnergy/paseo/pull/28).
 
 ## Excluded fork operations
 
