@@ -5,7 +5,7 @@
 **4 waiting.** No capability is `upstream-candidate`. No capability is `retired`. Host LaTeX
 rendering is **superseded** (see history) and is not one of the four.
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 The four waiting capabilities are:
 
@@ -16,18 +16,18 @@ The four waiting capabilities are:
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `f88e21fc32369cac9e4cf776909c83625961a5c0`
+- fork integration: `origin/internal/main` at `dcb4cba320359182e49fb3f840595e28ccf1ac81`
 - fork upstream mirror: `origin/main` at `d1b705a0cd91617a5707fae25d80cb0be3057950`
-- upstream: `getpaseo/paseo` `main` at `d1b705a0cd91617a5707fae25d80cb0be3057950`
-- review-period fork merges [#118](https://github.com/ZGEnergy/paseo/pull/118) (ledger refresh) and [#119](https://github.com/ZGEnergy/paseo/pull/119) (the `Downstream sync: true` resolution of [#114](https://github.com/ZGEnergy/paseo/pull/114)) land no new downstream product capability; #114 then merged automatically once the fork mirror became an ancestor of the integration branch
-- the fork upstream mirror moved from `f22a37e613` to `d1b705a0c` this review period: 8 upstream commits (Android clipboard image pasting [#4758](https://github.com/getpaseo/paseo/pull/4758), rejected-plan collapse [#4756](https://github.com/getpaseo/paseo/pull/4756), older-daemon timeline recovery [#4737](https://github.com/getpaseo/paseo/pull/4737), Cursor thinking options [#4180](https://github.com/getpaseo/paseo/pull/4180), incomplete-Markdown streaming formatting [#4742](https://github.com/getpaseo/paseo/pull/4742), archived Codex workspace restore [#4736](https://github.com/getpaseo/paseo/pull/4736), plus two changelog commits). None touch the four capabilities below (re-verified at code level 2026-09-13)
+- upstream: `getpaseo/paseo` `main` at `d1a53255fcd559bccd95f3f9e0b6ba85dc11d420`
+- review-period fork merges: [#120](https://github.com/ZGEnergy/paseo/pull/120) (ledger refresh) is the only integration-branch merge since the 2026-09-13 review and lands no downstream product capability
+- the fork upstream mirror is unchanged at `d1b705a0c` this review period; upstream `main` advanced one commit to `d1a53255f` ([#4824](https://github.com/getpaseo/paseo/pull/4824) composer viewport growth: composer viewport, keyboard-shift hooks, agent panel, new-workspace screen). It touches none of the four capabilities (re-verified at code level 2026-09-14); the scheduled sync workflow will advance the mirror
 - the sync conflicted where upstream #4742's streaming parser met the fork's plugin markdown surface in `packages/app/src/components/message.tsx`. The [#119](https://github.com/ZGEnergy/paseo/pull/119) resolution is a union: the streaming parser is built by applying the same plugin extensions over `createAssistantMarkdownParser({ streaming: true })`, so upstream streaming formatting and plugin extension rendering both hold, including while streaming. The resolution also moved `@types/markdown-it` from the fork's `^10.0.3` pin to upstream's `^14.1.2` in `packages/app` and `packages/plugin` (upstream's new `src/utils/streaming-markdown/index.ts` requires the v14 type layout, and the fork's v10 copy broke the plugin parser hook against v14), reconciled the lockfile hoisting, and refreshed `nix/npm-deps.hash`. Capability 1 behavior is unchanged by the resolution
 
 ## Plugin assistant-markdown surface
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 What this is: the host exposes `SvgXml`, `addMarkdownExtension`, and `MarkdownSource` so a plugin
 can extend the assistant markdown row without forking the renderer. Formula rendering is a plugin,
@@ -59,14 +59,14 @@ Upstream evidence:
 - [getpaseo/paseo#4750](https://github.com/getpaseo/paseo/pull/4750) `addMarkdownExtension`, open, head `15efaa1b284aa25b86428e6fe5e5ebdfc43cf2c5` (unchanged since 2026-09-12), stacked on 4749.
 - [getpaseo/paseo#4752](https://github.com/getpaseo/paseo/pull/4752) `MarkdownSource`, open, head `bfc1e0ecdc1a65ad3e556b72db4d16390dcc2aab` (unchanged since 2026-09-12), stacked on 4750.
 - Merge order is 4749, then 4750, then 4752. None of these add a formula renderer to core.
-- Upstream `main` contains no `SvgXml`, `addMarkdownExtension`, or `MarkdownSource` in its plugin surface at `d1b705a0cd91617a5707fae25d80cb0be3057950` (re-verified 2026-09-13; zero matches across `packages/plugin`, and no `@getpaseo/plugin/client/react-native` export). Upstream app components do import `SvgXml` from `react-native-svg` for their own provider icons (for example `packages/app/src/components/provider-icons.ts`), which is host-internal rendering, not the plugin surface this capability names.
+- Upstream `main` contains no `SvgXml`, `addMarkdownExtension`, or `MarkdownSource` in its plugin surface at `d1a53255fcd559bccd95f3f9e0b6ba85dc11d420` (re-verified 2026-09-14; zero matches across `packages/plugin`, and no `@getpaseo/plugin/client/react-native` export). Upstream app components do import `SvgXml` from `react-native-svg` for their own provider icons (for example `packages/app/src/components/provider-icons.ts`), which is host-internal rendering, not the plugin surface this capability names.
 - [getpaseo/paseo#2562](https://github.com/getpaseo/paseo/pull/2562) is closed and is not a candidate for this capability.
 
 ## OMP task and subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 Observable behavior:
 
@@ -86,13 +86,13 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3371](https://github.com/getpaseo/paseo/pull/3371), inspected head `fa9fc5e6244edc3252851f3132c49b34c3f56a84`, closed unmerged in favor of [#2777](https://github.com/getpaseo/paseo/pull/2777). That merged change aggregates native-child activity into workspace status while explicitly leaving parent lifecycle unchanged; it does not add bounded completion, yield settlement, or interruption-safe children.
-- Upstream `main` still completes from provider state alone at `d1b705a0cd91617a5707fae25d80cb0be3057950` (re-verified 2026-09-13): `completeTurnAfterProviderIdle` in `packages/server/src/server/agent/providers/omp/agent.ts` polls `runtimeSession.getState()` until `!isStreaming && !isCompacting`, debug-logs swallowed state errors, and retries through `OmpProviderIdleScheduler.waitForRetry()` (default 10 ms) with no elapsed-time or failure budget and no child-activity awareness; `interrupt()` calls `terminalizeActiveWork()`, which terminalizes running subagents through `subagentIndex.terminalizeRunning(...)`, so interruption still terminalizes running children.
+- Upstream `main` still completes from provider state alone at `d1a53255fcd559bccd95f3f9e0b6ba85dc11d420` (re-verified 2026-09-14): `completeTurnAfterProviderIdle` in `packages/server/src/server/agent/providers/omp/agent.ts` polls `runtimeSession.getState()` until `!isStreaming && !isCompacting`, debug-logs swallowed state errors, and retries through `OmpProviderIdleScheduler.waitForRetry()` (default 10 ms) with no elapsed-time or failure budget and no child-activity awareness; `interrupt()` calls `terminalizeActiveWork()`, which terminalizes running subagents through `subagentIndex.terminalizeRunning(...)`, so interruption still terminalizes running children.
 
 ## OMP Ask option descriptions
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 Observable behavior:
 
@@ -109,13 +109,13 @@ Fork evidence:
 Upstream evidence:
 
 - [getpaseo/paseo#3628](https://github.com/getpaseo/paseo/pull/3628), open, current head `f8e7b93dae7c143d17342c2e4ef8f779a4bfc007` (unchanged since 2026-09-11). The diff still carries the description candidate — `readSelectOptions(options, optionDetails)` with malformed/blank/extra fallback tests — over the same files as the fork implementation (`omp/agent.ts`, `omp/rpc-types.ts`).
-- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `d1b705a0cd91617a5707fae25d80cb0be3057950` (re-verified 2026-09-13; zero matches).
+- Upstream `main` already retains the `16.3.9` support floor but contains no `optionDetails` decoding or propagation at `d1a53255fcd559bccd95f3f9e0b6ba85dc11d420` (re-verified 2026-09-14; zero matches).
 
 ## Claude background and autonomous subagent lifecycle correctness
 
 **Status:** `waiting`
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 Observable behavior:
 
@@ -133,8 +133,8 @@ Upstream evidence:
 
 - [getpaseo/paseo#3366](https://github.com/getpaseo/paseo/pull/3366), inspected head `bf3820d81cc1579bc8ad4cd9721aeba972ad0b56`, closed unmerged in favor of [#3394](https://github.com/getpaseo/paseo/pull/3394), merge `42245d139ad1f3ba93c3e691e9e0a7971169ea79`.
 - Upstream active-turn steering, commit `f9e1def954550ec50c45ffa435f5fe1d57fc48f3`, and archive-continuation commit `613cbbe9ef7b461bdd7e859cf2303598100ad924` cover explicit steering, stale interrupt-window frames, and archived workspaces. They do not replace default follow-up admission during an autonomous turn or completed task-notification settlement.
-- Open upstream PRs adjacent to this capability, re-checked 2026-09-13, neither merged: [getpaseo/paseo#4594](https://github.com/getpaseo/paseo/pull/4594) "claude: spare background subagents from an interrupt, and let one be stopped", head `1549ea566e16c31d92e86bfe91b8645b80e65d5b` (unchanged since 2026-09-11); its server-side diff touches `agent-manager.ts`, `agent-manager.test.ts`, `agent-sdk-types.ts`, and `providers/claude/agent.ts` (sparing children from interrupts plus a stop control), and `agent-prompt.ts` and `agent-run-state.ts` remain absent, so the prompt-admission gate is still untouched. [getpaseo/paseo#4633](https://github.com/getpaseo/paseo/pull/4633) "fix(server): forward steerActiveTurn through wrapSessionProvider" (head `1132cdb0e6e50f4780c8c69e68c9c11e8500ef7b`) remains open and unchanged.
-- Upstream `main` at `d1b705a0cd91617a5707fae25d80cb0be3057950` (re-verified 2026-09-13) routes `task_notification` through `appendTaskNotificationEvents`, which appends provider-subagent timeline events only and never settles a leftover autonomous turn; replacement prompts still gate on `hasInFlightRun` with no `acceptsPromptDuringAutonomousTurn` and no autonomous-run supersession settlement, so a compatible background child neither keeps the parent admitted nor blocks replacement.
+- Open upstream PRs adjacent to this capability, re-checked 2026-09-14, neither merged: [getpaseo/paseo#4594](https://github.com/getpaseo/paseo/pull/4594) "claude: spare background subagents from an interrupt, and let one be stopped", head `1549ea566e16c31d92e86bfe91b8645b80e65d5b` (unchanged since 2026-09-11); its server-side diff touches `agent-manager.ts`, `agent-manager.test.ts`, `agent-sdk-types.ts`, and `providers/claude/agent.ts` (sparing children from interrupts plus a stop control), and `agent-prompt.ts` and `agent-run-state.ts` remain absent, so the prompt-admission gate is still untouched. [getpaseo/paseo#4633](https://github.com/getpaseo/paseo/pull/4633) "fix(server): forward steerActiveTurn through wrapSessionProvider" (head `1132cdb0e6e50f4780c8c69e68c9c11e8500ef7b`) remains open and unchanged.
+- Upstream `main` at `d1a53255fcd559bccd95f3f9e0b6ba85dc11d420` (re-verified 2026-09-14) routes `task_notification` through `appendTaskNotificationEvents`, which appends provider-subagent timeline events only and never settles a leftover autonomous turn; replacement prompts still gate on `hasInFlightRun` with no `acceptsPromptDuringAutonomousTurn` and no autonomous-run supersession settlement, so a compatible background child neither keeps the parent admitted nor blocks replacement.
 
 ## Retired history
 
