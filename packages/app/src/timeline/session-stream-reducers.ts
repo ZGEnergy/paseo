@@ -158,7 +158,6 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
-  serverId?: string;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -423,13 +422,7 @@ function mergeTimelineWindow(args: {
     return cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq;
   });
   const retainedHead = projected.head;
-  const reservedItemIds = new Set(
-    [...retainedTail, ...retainedHead].flatMap((item) =>
-      item.kind === "assistant_message" && item.blockGroupId
-        ? [item.id, item.blockGroupId]
-        : [item.id],
-    ),
-  );
+  const reservedItemIds = new Set([...retainedTail, ...retainedHead].map((item) => item.id));
   const hydrated = hydrateStreamState(
     toHydratedEvents(timelineUnits.filter((unit) => !projected.reconciledUnits.has(unit))),
     {
@@ -824,51 +817,31 @@ function reconcileOverlappingProjectedAssistant(params: {
     return { tail: params.tail, head: params.head, reconciled: false };
   }
 
-  const blockGroupId = match.current.blockGroupId;
   const messageId = projectedMessageId ?? match.current.messageId;
   const replacement: AssistantMessageItem = {
     kind: "assistant_message",
-    id: blockGroupId ?? match.current.id,
+    id: match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
   };
-  const belongsToBlockGroup = (item: StreamItem) =>
-    blockGroupId !== undefined &&
-    item.kind === "assistant_message" &&
-    item.blockGroupId === blockGroupId;
-  const removeBlockGroup = (items: StreamItem[]) =>
-    blockGroupId !== undefined ? items.filter((item) => !belongsToBlockGroup(item)) : items;
   const replaceMatch = (items: StreamItem[], index: number) => {
-    if (!blockGroupId) {
-      const next = [...items];
-      next[index] = replacement;
-      return next;
-    }
-    const next: StreamItem[] = [];
-    let inserted = false;
-    for (const item of items) {
-      if (!belongsToBlockGroup(item)) {
-        next.push(item);
-      } else if (!inserted) {
-        next.push(replacement);
-        inserted = true;
-      }
-    }
+    const next = [...items];
+    next[index] = replacement;
     return next;
   };
 
   if (headMatch) {
     return {
-      tail: removeBlockGroup(params.tail),
+      tail: params.tail,
       head: replaceMatch(params.head, headMatch.index),
       reconciled: true,
     };
   }
   return {
     tail: replaceMatch(params.tail, match.index),
-    head: removeBlockGroup(params.head),
+    head: params.head,
     reconciled: true,
   };
 }
@@ -955,7 +928,6 @@ function applyCanonicalForwardUnit(params: {
   head: StreamItem[];
   unit: TimelineUnit;
   epoch: string;
-  serverId?: string;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const { event, timestamp, seqEnd } = params.unit;
   const timelineCursor = { epoch: params.epoch, seq: seqEnd };
@@ -967,7 +939,6 @@ function applyCanonicalForwardUnit(params: {
       timestamp,
       source: "canonical",
       timelineCursor,
-      serverId: params.serverId,
     });
     return {
       tail: applied.tail,
@@ -1022,7 +993,6 @@ function applyCanonicalForwardUnit(params: {
     timestamp,
     source: "canonical",
     timelineCursor,
-    serverId: params.serverId,
   });
   return {
     tail: applied.tail,
@@ -1037,7 +1007,6 @@ function applyAcceptedForwardTimelineUnits(params: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentEndSeq: number | undefined;
-  serverId?: string;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const reconciled = reconcileOverlappingProjectedStreamItems({
     tail: params.currentTail,
@@ -1056,7 +1025,6 @@ function applyAcceptedForwardTimelineUnits(params: {
       head,
       unit,
       epoch: params.epoch,
-      serverId: params.serverId,
     });
     tail = applied.tail;
     head = applied.head;
@@ -1070,7 +1038,6 @@ function applyAcceptedForwardTimelineUnits(params: {
       epoch: params.epoch,
       currentTail: params.currentTail,
       currentHead: params.currentHead,
-      serverId: params.serverId,
     }),
   };
 }
@@ -1080,20 +1047,13 @@ function deriveCanonicalAcknowledgements(params: {
   epoch: string;
   currentTail: StreamItem[];
   currentHead: StreamItem[];
-  serverId?: string;
 }): string[] {
   let tail = params.currentTail;
   let head = params.currentHead;
   const acknowledged = new Set<string>();
   for (const unit of params.units) {
     if (unit.event.type !== "timeline" || unit.event.item.type !== "user_message") continue;
-    const applied = applyCanonicalForwardUnit({
-      tail,
-      head,
-      unit,
-      epoch: params.epoch,
-      serverId: params.serverId,
-    });
+    const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
     tail = applied.tail;
     head = applied.head;
     for (const clientMessageId of applied.acknowledgedClientMessageIds) {
@@ -1150,13 +1110,12 @@ function applyAcceptedTimelinePage(input: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
-  serverId?: string;
 }): {
   tail: StreamItem[];
   head: StreamItem[];
   acknowledgedClientMessageIds: string[];
 } {
-  const { acceptedUnits, payload, currentTail, currentHead, currentCursor, serverId } = input;
+  const { acceptedUnits, payload, currentTail, currentHead, currentCursor } = input;
   if (acceptedUnits.length === 0) {
     return { tail: currentTail, head: currentHead, acknowledgedClientMessageIds: [] };
   }
@@ -1167,7 +1126,6 @@ function applyAcceptedTimelinePage(input: {
       currentTail,
       currentHead,
       currentEndSeq: currentCursor?.endSeq,
-      serverId,
     });
   }
   const olderTail = hydrateStreamState(
@@ -1178,13 +1136,7 @@ function applyAcceptedTimelinePage(input: {
     })),
     {
       source: "canonical",
-      reservedItemIds: new Set(
-        currentTail.flatMap((item) =>
-          item.kind === "assistant_message" && item.blockGroupId
-            ? [item.id, item.blockGroupId]
-            : [item.id],
-        ),
-      ),
+      reservedItemIds: new Set(currentTail.map((item) => item.id)),
     },
   );
   return {
@@ -1206,9 +1158,8 @@ function applyTimelineIncrementalPath(args: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
-  serverId?: string;
 }): TimelinePathResult {
-  const { timelineUnits, payload, currentTail, currentHead, currentCursor, serverId } = args;
+  const { timelineUnits, payload, currentTail, currentHead, currentCursor } = args;
   let nextCursor: TimelineCursor | null | undefined = currentCursor;
   let cursorChanged = false;
   const sideEffects: TimelineReducerSideEffect[] = [];
@@ -1244,7 +1195,6 @@ function applyTimelineIncrementalPath(args: {
     currentTail,
     currentHead,
     currentCursor,
-    serverId,
   });
 
   if (cursor && (!currentCursor || !timelineCursorEquals(currentCursor, cursor))) {
@@ -1279,7 +1229,6 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
     initRequestDirection,
     sendingClientMessageIds,
-    serverId,
   } = input;
 
   // ------------------------------------------------------------------
@@ -1412,7 +1361,6 @@ export function processTimelineResponse(
       currentTail,
       currentHead,
       currentCursor,
-      serverId,
     });
   }
 
@@ -1474,7 +1422,6 @@ export interface ProcessAgentStreamEventInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   timestamp: Date;
-  serverId?: string;
 }
 
 export interface ProcessAgentStreamEventOutput {
@@ -1511,7 +1458,6 @@ export interface ProcessAgentStreamEventsInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   isDetached?: boolean;
-  serverId?: string;
 }
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
@@ -1621,7 +1567,6 @@ export function processAgentStreamEvent(
     currentCursor,
     timestamp,
     hasAuthoritativeBaseline = true,
-    serverId,
   } = input;
 
   const sequencing = processTimelineSequencingGate({
@@ -1656,7 +1601,6 @@ export function processAgentStreamEvent(
         source: "live",
         timelineCursor,
         unmatchedUserMessageInsert: "head",
-        serverId,
       });
     } else {
       const overlay = applyStreamEvent({
@@ -1666,7 +1610,6 @@ export function processAgentStreamEvent(
         timestamp,
         source: "live",
         timelineCursor,
-        serverId,
       });
       streamResult = {
         tail: currentTail,
@@ -1683,7 +1626,6 @@ export function processAgentStreamEvent(
       timestamp,
       source: "live",
       timelineCursor,
-      serverId,
     });
   }
   const { tail, head, changedTail, changedHead } = streamResult;
@@ -1738,7 +1680,6 @@ export function processAgentStreamEvents(
       currentCursor: cursor,
       hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
       timestamp: reducerEvent.timestamp,
-      serverId: input.serverId,
     });
 
     tail = result.tail;
@@ -1950,7 +1891,6 @@ export function createSessionAgentStreamReducerQueue(
         currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
         hasAuthoritativeBaseline: timeline.status === "synced",
         isDetached: timeline.status === "synced" && timeline.newer === "available",
-        serverId,
       };
     },
     commit: (agentId, result, events) => {

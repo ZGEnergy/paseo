@@ -1,6 +1,8 @@
 import MarkdownIt from "markdown-it";
 
+// Only block maps are needed here; inline parsing belongs to each rendered block.
 const markdownBlockParser = new MarkdownIt();
+markdownBlockParser.core.ruler.disable("inline");
 
 function isEscaped(source: string, position: number): boolean {
   let backslashCount = 0;
