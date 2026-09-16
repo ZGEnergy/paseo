@@ -8,10 +8,10 @@ Last reviewed: 2026-09-16
 
 Evidence baseline:
 
-- fork integration: `origin/internal/main` at `c080bca84` (ledger refresh [#124](https://github.com/ZGEnergy/paseo/pull/124) merged 2026-09-15); the conflicted sync [#125](https://github.com/ZGEnergy/paseo/pull/125) is resolved by downstream sync [#126](https://github.com/ZGEnergy/paseo/pull/126) (merge head `ee9067bca`, second parent live `main` `0eac75be7`), which carries conflict resolution only and no capability changes
+- fork integration: `origin/internal/main` at `6f21d66aa` — downstream sync [#126](https://github.com/ZGEnergy/paseo/pull/126) merged 2026-09-16 as `6f21d66aa` (resolution head `1e3256953`, two-parent: first parent `d2ffe7eb3`, second parent live `main` `0eac75be7`), carrying the upstream mirror `0eac75be7` into `internal/main`; conflict resolution only, no capability changes; auto-PR [#125](https://github.com/ZGEnergy/paseo/pull/125) merged as the same tree
 - fork upstream mirror: `origin/main` at `0eac75be7dd11a6623abb763b3a44d23e711c550`
 - upstream: `getpaseo/paseo` `main` at `64b1a62ed3ab86ced73393624087f050ecdd7d7f`
-- review-period fork merges since 2026-09-15: none to `internal/main`; in flight are sync [#126](https://github.com/ZGEnergy/paseo/pull/126) and this ledger refresh, neither of which adds product capability changes
+- review-period fork merges since 2026-09-15: [#127](https://github.com/ZGEnergy/paseo/pull/127) (ledger refresh) and the sync pair [#126](https://github.com/ZGEnergy/paseo/pull/126)/[#125](https://github.com/ZGEnergy/paseo/pull/125) — none add product capability changes
 - the fork upstream mirror moved from `b21c004ff` to `0eac75be7` across the review period (14 commits: plugin application-lease recovery, composer height/typing isolation, reconnect toast continuity, Windows plugin build spawning, older-host client compatibility, ACP timeline chunk continuity, chat-history/terminal-scrollback/file-pane find, mobile diff-tree button softening, CI test-suite deflake, streaming Markdown spec helper, and lockfile/Nix chores — none touch the four capabilities); upstream `main` additionally holds `64b1a62ed` (#4927 voice reply latency and internal prompt wrappers) not yet mirrored
 
 ## Plugin assistant-markdown surface
