@@ -15,18 +15,17 @@ import {
 import path from "node:path";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
+import { readDaemonInstance, stopDaemonInstance } from "@getpaseo/server/daemon-control";
+import { loadConfig } from "@getpaseo/server/configuration";
 import {
   cliLaunchDescriptorSchema,
-  editPersistedConfig,
   getPidLockInfo,
   isAttestedCliLifecycle,
-  loadConfig,
-  readDaemonInstance,
-  stopDaemonInstance,
   type CliLaunchDescriptor,
   type PidLifecycle,
   type PidLockInfo,
-} from "@getpaseo/server";
+} from "@getpaseo/server/pid-lock";
+import { editPersistedConfig } from "@getpaseo/server/persisted-config";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import { resolveLocalPaseoHome } from "./local-daemon.js";
 
