@@ -20,6 +20,9 @@ function ghApi(path, accept = "application/vnd.github+json") {
     return execFileSync("gh", ["api", path, "--header", `Accept: ${accept}`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // Sync-resolution merge commits and PR patches answer with the full file
+      // list; the 1 MiB default kills the child with ENOBUFS before we parse.
+      maxBuffer: 512 * 1024 * 1024,
     });
   } catch (error) {
     const detail = error.stderr?.toString().trim();
