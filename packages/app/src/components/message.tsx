@@ -75,7 +75,7 @@ import {
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import { StreamingWords, useWordStream } from "@/word-stream";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
@@ -1399,7 +1399,6 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
-  sourceOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
@@ -1407,7 +1406,6 @@ interface MemoizedMarkdownBlockProps {
 
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
-  sourceOffset,
   rules,
   parser,
   onLinkPress,
@@ -1415,7 +1413,6 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   return (
     <MarkdownRenderer
       text={text}
-      sourceOffset={sourceOffset}
       enableHtmlish={false}
       rules={rules}
       markdownit={parser}
@@ -1536,10 +1533,8 @@ export const AssistantMessage = memo(function AssistantMessage({
       renderFullContent ? { text: message, capped: false } : capAssistantMessageForRender(message),
     [message, renderFullContent],
   );
-  // Paint a paced prefix while the turn is streaming so text arrives at a steady
-  // rate instead of in whatever lumps the daemon's coalescing window produced.
-  const stream = useWordStream(renderedMessage.text, phase);
-  const revealedMessage = renderFullContent ? renderedMessage.text : stream.text;
+  const revealedText = useRevealedText(renderedMessage.text, phase);
+  const revealedMessage = renderFullContent ? renderedMessage.text : revealedText;
   const fullMessageByteLength = useMemo(
     () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
     [message, phase, renderedMessage.capped],
@@ -1996,14 +1991,10 @@ export const AssistantMessage = memo(function AssistantMessage({
     void markdownExtensions;
     return splitMarkdownBlocks(revealedMessage, { serverId });
   }, [revealedMessage, markdownExtensions, serverId]);
-  const keyedBlocks = useMemo(() => {
-    let cursor = 0;
-    return blocks.map((block) => {
-      const sourceOffset = revealedMessage.indexOf(block, cursor);
-      cursor = sourceOffset + block.length;
-      return { key: `block:${sourceOffset}`, block, sourceOffset };
-    });
-  }, [blocks, revealedMessage]);
+  const keyedBlocks = useMemo(
+    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
+    [blocks],
+  );
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -2028,38 +2019,35 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   return (
-    <StreamingWords stream={stream}>
-      <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-        {keyedBlocks.map(({ key, block, sourceOffset }, index) => (
-          <AssistantMessageBlockContainer
-            key={key}
-            block={block}
-            marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
-            serverId={serverId}
-          >
-            <MemoizedMarkdownBlock
-              text={block}
-              sourceOffset={sourceOffset}
-              rules={markdownRules}
-              parser={
-                phase === "streaming" && index === keyedBlocks.length - 1
-                  ? streamingMarkdownParser
-                  : markdownParser
-              }
-              onLinkPress={handleMarkdownLinkPress}
-            />
-          </AssistantMessageBlockContainer>
-        ))}
-        {fullMessageByteLength !== null ? (
-          <Text
-            testID="assistant-message-capped-notice"
-            style={assistantMessageStylesheet.cappedNotice}
-          >
-            {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
-          </Text>
-        ) : null}
-      </View>
-    </StreamingWords>
+    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
+      {keyedBlocks.map(({ key, block }, index) => (
+        <AssistantMessageBlockContainer
+          key={key}
+          block={block}
+          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          serverId={serverId}
+        >
+          <MemoizedMarkdownBlock
+            text={block}
+            rules={markdownRules}
+            parser={
+              phase === "streaming" && index === keyedBlocks.length - 1
+                ? streamingMarkdownParser
+                : markdownParser
+            }
+            onLinkPress={handleMarkdownLinkPress}
+          />
+        </AssistantMessageBlockContainer>
+      ))}
+      {fullMessageByteLength !== null ? (
+        <Text
+          testID="assistant-message-capped-notice"
+          style={assistantMessageStylesheet.cappedNotice}
+        >
+          {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
+        </Text>
+      ) : null}
+    </View>
   );
 });
 

@@ -2,13 +2,9 @@ import { Command, Option } from "commander";
 import { existsSync, readFileSync, readlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import {
-  loadConfig,
-  resolvePaseoHome,
-  startDaemonInstance,
-  type CliLaunchDescriptor,
-} from "@getpaseo/server";
-
+import { resolvePaseoHome, startDaemonInstance } from "@getpaseo/server/daemon-control";
+import { loadConfig } from "@getpaseo/server/configuration";
+import type { CliLaunchDescriptor } from "@getpaseo/server";
 const require = createRequire(import.meta.url);
 
 function resolveServerRunnerFromDir(currentDir: string): string | null {
