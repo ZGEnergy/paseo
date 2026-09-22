@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { runPluginClientBundle, type PluginClientRuntime } from "@/plugins/evaluate";
 import type { InstalledPlugin } from "@/plugins/types";
@@ -11,6 +11,10 @@ import {
   type UserMessageItem,
 } from "@/types/stream";
 import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
+import {
+  clearMarkdownBlockDelimiters,
+  setMarkdownBlockDelimiters,
+} from "@/utils/split-markdown-blocks";
 import { createStreamPresentation } from "./presentation";
 import { buildAgentStreamRenderModel } from "./model";
 
@@ -121,6 +125,10 @@ function rows(result: { tail: StreamItem[]; head: StreamItem[] }): StreamItem[] 
   return [...result.tail, ...result.head];
 }
 
+function assistantRowTexts(items: StreamItem[]): string[] {
+  return items.flatMap((item) => (item.kind === "assistant_message" ? [item.text] : []));
+}
+
 describe("stream presentation through installed plugins", () => {
   it("offers every source tool call to an installed transformer in Overview mode", () => {
     const calls = [toolCall("call-1", "bash"), toolCall("call-2", "read")];
@@ -210,21 +218,186 @@ describe("stream presentation through installed plugins", () => {
     expect(result.head).toMatchObject([{ text: "```ts\nconst a = 1;\n\nconst b = 2;" }]);
   });
 
-  it("leaves fetched native Markdown intact, including cross-paragraph references", () => {
+  // One rendering path: a fetched message is the same block group as a streamed one,
+  // which is what lets find, scroll-to-message and history reveal address it by id.
+  // A link reference definition stays with the paragraph that uses it, so the split
+  // never leaves an empty row behind and the reference still resolves.
+  it("splits an assistant message into the same blocks through history and through the live head", () => {
     const source = hydrateStreamState([
       {
-        event: assistant("[Link][docs]\n\n[docs]: https://example.com"),
+        event: assistant("[Link][docs]\n\n[docs]: https://example.com\n\nClosing paragraph."),
         timestamp: new Date(1000),
       },
     ]);
+    const messageId = source[0]!.id;
+    const present = (placement: "tail" | "head") =>
+      rows(
+        createStreamPresentation()({
+          ...presentationOptions,
+          tail: placement === "tail" ? source : [],
+          head: placement === "head" ? source : [],
+          transform: undefined,
+        }),
+      );
+    expect(present("tail")).toMatchObject([
+      {
+        id: `${messageId}:block:0`,
+        blockGroupId: messageId,
+        blockIndex: 0,
+        text: "[Link][docs]\n\n[docs]: https://example.com",
+      },
+      {
+        id: `${messageId}:block:1`,
+        blockGroupId: messageId,
+        blockIndex: 1,
+        text: "Closing paragraph.",
+      },
+    ]);
+    const blocks = (items: StreamItem[]) =>
+      items.map((item) => [item.id, item.kind === "assistant_message" ? item.text : null]);
+    expect(blocks(present("head"))).toEqual(blocks(present("tail")));
+  });
+
+  describe("host-scoped row splitting", () => {
+    afterEach(() => {
+      clearMarkdownBlockDelimiters();
+    });
+
+    it("keeps a region declared by the host's plugins in one row across blank lines", () => {
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      const source = hydrateStreamState([
+        { event: assistant("Intro\n\n:::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const render = (serverId: string | undefined) =>
+        assistantRowTexts(
+          rows(
+            createStreamPresentation()({
+              ...presentationOptions,
+              transform: undefined,
+              serverId,
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render("host-a")).toEqual(["Intro", ":::\nstill\n\nstreaming"]);
+      expect(render(undefined)).toEqual(["Intro", ":::\nstill", "streaming"]);
+    });
+
+    it("re-splits cached rows when the presentation host changes", () => {
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      const source = hydrateStreamState([
+        { event: assistant(":::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const present = createStreamPresentation();
+      const render = (serverId: string) =>
+        assistantRowTexts(
+          rows(
+            present({
+              ...presentationOptions,
+              transform: undefined,
+              serverId,
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render("host-a")).toEqual([":::\nstill\n\nstreaming"]);
+      expect(render("host-b")).toEqual([":::\nstill", "streaming"]);
+    });
+
+    it("re-splits cached rows when the host's plugin catalog changes", () => {
+      const source = hydrateStreamState([
+        { event: assistant(":::\nstill\n\nstreaming"), timestamp: new Date(1000) },
+      ]);
+      const present = createStreamPresentation();
+      const render = () =>
+        assistantRowTexts(
+          rows(
+            present({
+              ...presentationOptions,
+              transform: undefined,
+              serverId: "host-a",
+              tail: source,
+              head: [],
+            }),
+          ),
+        );
+      expect(render()).toEqual([":::\nstill", "streaming"]);
+      setMarkdownBlockDelimiters("host-a", [{ open: ":::", close: ":::" }]);
+      expect(render()).toEqual([":::\nstill\n\nstreaming"]);
+      setMarkdownBlockDelimiters("host-a", []);
+      expect(render()).toEqual([":::\nstill", "streaming"]);
+    });
+  });
+
+  // Rows are addressed by id from outside presentation, so the same text has to land on
+  // the same ids whether the reader watched it arrive or opened the chat afterwards.
+  it("gives a streamed message the block ids its hydrated text would have had", () => {
+    const text = "Intro paragraph.\n\n# Heading\n\n- first\n- second\n\nClosing paragraph.";
+    const harness = streamHarness();
+    for (let end = 8; end < text.length; end += 8) {
+      harness.send(assistant(text.slice(end - 8, end)));
+    }
+    harness.send(assistant(text.slice(text.length - (text.length % 8 || 8))));
+    const streamed = rows(harness.send({ type: "turn_completed", provider: "claude" }));
+    const hydrated = rows(
+      createStreamPresentation()({
+        ...presentationOptions,
+        tail: hydrateStreamState([{ event: assistant(text), timestamp: new Date(1000) }]),
+        head: [],
+        transform: undefined,
+      }),
+    );
+    expect(streamed.map((item) => item.id)).toEqual(hydrated.map((item) => item.id));
+    expect(streamed.map((item) => item.kind === "assistant_message" && item.text)).toEqual(
+      hydrated.map((item) => item.kind === "assistant_message" && item.text),
+    );
+  });
+
+  it("repoints a block at the canonical source that replaced the streamed one", () => {
+    const harness = streamHarness();
+    harness.send(assistant("Streamed answer"));
+    const streamed = rows(harness.render());
+    expect(streamed[0]).not.toHaveProperty("timelineCursor");
+    const source = harness.source();
+    const live = source.head[0];
+    if (live?.kind !== "assistant_message") throw new Error("Expected a live assistant message");
+    const canonical = { ...live, timelineCursor: { epoch: "epoch-1", seq: 42 } };
+    const present = createStreamPresentation();
+    present({ ...presentationOptions, tail: [], head: [live], transform: undefined });
+    const repointed = rows(
+      present({ ...presentationOptions, tail: [], head: [canonical], transform: undefined }),
+    );
+    expect(repointed).toMatchObject([
+      {
+        id: streamed[0]!.id,
+        text: "Streamed answer",
+        timelineCursor: { epoch: "epoch-1", seq: 42 },
+      },
+    ]);
+  });
+
+  it("keeps a single-paragraph message a one-block group", () => {
+    const source = hydrateStreamState([
+      { event: assistant("Only one paragraph."), timestamp: new Date(1000) },
+    ]);
+    const messageId = source[0]!.id;
     const result = createStreamPresentation()({
       ...presentationOptions,
       tail: source,
       head: [],
       transform: undefined,
     });
-    expect(result.tail).toEqual(source);
-    expect(result.tail[0]).toBe(source[0]);
+    expect(result.tail).toMatchObject([
+      {
+        id: `${messageId}:block:0`,
+        blockGroupId: messageId,
+        blockIndex: 0,
+        text: "Only one paragraph.",
+      },
+    ]);
+    expect(result.tail[0]!.id).not.toBe(messageId);
   });
 
   it("continues to stream inline reasoning with a stable plugin row", () => {
@@ -441,7 +614,13 @@ describe("timeline presentation", () => {
         text: "<spoken-input>Example</spoken-input><instruction>Explain this XML.</instruction>",
       },
     ];
-    expect(projectTimelineItems(items)).toEqual(items);
+    expect(projectTimelineItems(items)).toEqual(
+      items.map((item) =>
+        item.kind === "assistant_message"
+          ? { ...item, id: `${item.id}:block:0`, blockGroupId: item.id, blockIndex: 0 }
+          : item,
+      ),
+    );
     expect(projectTimelineItems(items)[0]).toBe(items[0]);
   });
 
