@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearMarkdownBlockDelimiters,
+  getMarkdownBlockDelimiterRevision,
   getMarkdownBlockDelimiters,
   setMarkdownBlockDelimiters,
   splitMarkdownBlocks,
@@ -198,6 +199,78 @@ describe("splitMarkdownBlocks", () => {
     ).toEqual(["Before", "3. Outer three\n\n   7. Inner seven\n   8. Inner eight", "After"]);
   });
 
+  it("keeps a link reference definition with the paragraph that uses it", () => {
+    expect(splitMarkdownBlocks("See the [docs][d].\n\n[d]: https://example.com")).toEqual([
+      "See the [docs][d].\n\n[d]: https://example.com",
+    ]);
+  });
+
+  it("folds a leading definition-only block into the block below it", () => {
+    expect(splitMarkdownBlocks('[d]: https://example.com "Docs"\n\nSee the [docs][d].')).toEqual([
+      '[d]: https://example.com "Docs"\n\nSee the [docs][d].',
+    ]);
+  });
+
+  it("folds several definition lines and several definition blocks into one block", () => {
+    expect(
+      splitMarkdownBlocks(
+        "See [one][a] and [two][b].\n\n[a]: https://example.com/a\n[b]: <https://example.com/b>\n\n[c]: https://example.com/c 'Third'\n\nAfter",
+      ),
+    ).toEqual([
+      "See [one][a] and [two][b].\n\n[a]: https://example.com/a\n[b]: <https://example.com/b>\n\n[c]: https://example.com/c 'Third'",
+      "After",
+    ]);
+  });
+
+  it("recognizes every destination the renderer accepts, including escaped spaces", () => {
+    expect(splitMarkdownBlocks("See [docs].\n\n[docs]: docs\\ folder/readme")).toEqual([
+      "See [docs].\n\n[docs]: docs\\ folder/readme",
+    ]);
+    expect(splitMarkdownBlocks("See [docs].\n\n[docs]: <docs folder/readme> 'Title'")).toEqual([
+      "See [docs].\n\n[docs]: <docs folder/readme> 'Title'",
+    ]);
+  });
+
+  it("leaves a definition-only message as its own block", () => {
+    expect(splitMarkdownBlocks("[d]: https://example.com")).toEqual(["[d]: https://example.com"]);
+  });
+
+  it("does not fold a paragraph that merely starts with a bracketed link", () => {
+    expect(splitMarkdownBlocks("Intro\n\n[Link](https://example.com) and more prose")).toEqual([
+      "Intro",
+      "[Link](https://example.com) and more prose",
+    ]);
+  });
+
+  it("does not fold a delimiter-protected region that parses as link reference definitions", () => {
+    expect(
+      splitMarkdownBlocks("Before\n\n[d]: https://open\n\n[e]: https://close\n\nAfter", {
+        blockDelimiters: [{ open: "[d]:", close: "[e]:" }],
+      }),
+    ).toEqual(["Before", "[d]: https://open\n\n[e]: https://close", "After"]);
+  });
+
+  it("keeps a leading delimiter-protected definition-only region separate from following prose", () => {
+    expect(
+      splitMarkdownBlocks("[d]: https://open\n\n[e]: https://close\n\nAfter", {
+        blockDelimiters: [{ open: "[d]:", close: "[e]:" }],
+      }),
+    ).toEqual(["[d]: https://open\n\n[e]: https://close", "After"]);
+  });
+
+  it("does not glue a leading definition-only block into a delimiter-protected region", () => {
+    expect(
+      splitMarkdownBlocks(
+        "See [docs][d].\n\n[d]: https://example.com\n\n[k]: https://open\n\n[l]: https://close\n\nAfter",
+        { blockDelimiters: [{ open: "[k]:", close: "[l]:" }] },
+      ),
+    ).toEqual([
+      "See [docs][d].\n\n[d]: https://example.com",
+      "[k]: https://open\n\n[l]: https://close",
+      "After",
+    ]);
+  });
+
   it("treats triple newlines as a split point and filters empty blocks", () => {
     expect(splitMarkdownBlocks("First paragraph\n\n\nSecond paragraph")).toEqual([
       "First paragraph",
@@ -209,6 +282,14 @@ describe("splitMarkdownBlocks", () => {
 describe("setMarkdownBlockDelimiters", () => {
   afterEach(() => {
     clearMarkdownBlockDelimiters();
+  });
+
+  it("bumps the catalog revision on publish and clear", () => {
+    const before = getMarkdownBlockDelimiterRevision();
+    setMarkdownBlockDelimiters("host-rev", MATH_DELIMITERS);
+    expect(getMarkdownBlockDelimiterRevision()).toBeGreaterThan(before);
+    clearMarkdownBlockDelimiters("host-rev");
+    expect(getMarkdownBlockDelimiterRevision()).toBeGreaterThan(before + 1);
   });
 
   it("scopes registered delimiters to the host they were published for", () => {

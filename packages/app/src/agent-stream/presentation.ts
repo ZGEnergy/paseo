@@ -1,7 +1,10 @@
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  getMarkdownBlockDelimiterRevision,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
@@ -15,12 +18,38 @@ interface PresentationInput {
   transform: TimelineItemTransform | undefined;
   level: ToolCallDetailLevel;
   isTurnActive: boolean;
+  serverId?: string;
 }
 
 function retainItems(previous: StreamItem[], next: StreamItem[]): StreamItem[] {
   return previous.length === next.length && previous.every((item, index) => item === next[index])
     ? previous
     : next;
+}
+
+/**
+ * The source message a display row belongs to. Every assistant message is split into
+ * Markdown blocks, so an assistant row id never equals its message id; anything that
+ * addresses a message — find, scroll-to-message, history reveal — asks for this.
+ */
+export function getStreamItemMessageId(item: StreamItem): string {
+  return item.kind === "assistant_message" ? (item.blockGroupId ?? item.id) : item.id;
+}
+
+/**
+ * A block is reusable only when it still stands for the same source state. Text and
+ * turn are what the reader sees; cursor and timestamp are what the timeline reads back
+ * through the row — a reused block carrying a pre-canonical cursor reports a stale
+ * reading position and weakens fork-boundary resolution.
+ */
+function isReusableBlock(block: AssistantMessageItem, source: AssistantMessageItem, id: string) {
+  return (
+    block.id === id &&
+    block.turnId === source.turnId &&
+    block.timestamp.getTime() === source.timestamp.getTime() &&
+    block.timelineCursor?.epoch === source.timelineCursor?.epoch &&
+    block.timelineCursor?.seq === source.timelineCursor?.seq
+  );
 }
 
 /** Source messages reach plugins before any Markdown splitting or Overview grouping. */
@@ -42,7 +71,7 @@ export function createStreamPresentation() {
     return projected;
   }
 
-  const blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
+  let blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
   let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
@@ -53,8 +82,17 @@ export function createStreamPresentation() {
   let preparedTail: StreamItem[] | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
+  let presentationServerId: string | undefined;
+  let presentationDelimiterRevision = getMarkdownBlockDelimiterRevision();
 
-  function nativeBlocks(item: StreamItem): StreamItem[] {
+  /**
+   * One display row per Markdown block. Each block renders on its own, so a construct
+   * that needs context from another block does not resolve: `splitMarkdownBlocks` keeps
+   * link reference definitions with the block that uses them, but a reference pointing
+   * at a definition several blocks away renders as literal text. Streamed messages
+   * always behaved this way; history now matches them.
+   */
+  function nativeBlocks(item: StreamItem, serverId: string | undefined): StreamItem[] {
     if (item.kind === "user_message") return [presentUserMessage(item)];
     if (item.kind !== "assistant_message") return [item];
     const cached = blocksBySource.get(item);
@@ -71,11 +109,9 @@ export function createStreamPresentation() {
       growingText =
         previous[previous.length - 1]!.text + item.text.slice(previousSource.text.length);
     }
-    const textBlocks = splitMarkdownBlocks(growingText);
-    if (prefix.length + textBlocks.length < 2) {
-      blocksBySource.set(item, [item]);
-      return [item];
-    }
+    const parsed = splitMarkdownBlocks(growingText, { serverId });
+    // Whitespace-only text has no block, and a message still owns exactly one row.
+    const textBlocks = parsed.length > 0 || prefix.length > 0 ? parsed : [""];
 
     const blocks = [...prefix];
     for (const [offset, text] of textBlocks.entries()) {
@@ -87,9 +123,7 @@ export function createStreamPresentation() {
       }
       const existing = previous?.[index];
       const id = `${item.id}:block:${index}`;
-      // Completed display blocks keep their first cursor and object identity while
-      // the source message grows. The source itself always retains the latest cursor.
-      if (existing?.id === id && existing.text === blockText && existing.turnId === item.turnId) {
+      if (existing?.text === blockText && isReusableBlock(existing, item, id)) {
         blocks.push(existing);
         continue;
       }
@@ -106,15 +140,28 @@ export function createStreamPresentation() {
   }
 
   return (input: PresentationInput) => {
+    const delimiterRevision = getMarkdownBlockDelimiterRevision();
+    if (
+      presentationServerId !== input.serverId ||
+      presentationDelimiterRevision !== delimiterRevision
+    ) {
+      // Delimiters are host-scoped and plugins install or leave mid-session: cached
+      // blocks split under another host or an older catalog would keep boundaries
+      // nobody declared anymore.
+      blocksBySource = new WeakMap();
+      liveSources = new Map();
+      historySource = undefined;
+      historyTransform = undefined;
+      presentationServerId = input.serverId;
+      presentationDelimiterRevision = delimiterRevision;
+    }
     // Retained history is not reprojected or regrouped on each live text update.
     if (historySource !== input.tail || historyTransform !== input.transform) {
+      // One rendering path: history splits the same way the live head does, and
+      // `blocksBySource` keeps both the live block identities and the split cost
+      // from being paid again when only the tail's array identity changed.
       historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) => {
-          // Preserve live block identities at completion; fetched native Markdown
-          // stays whole so links and other cross-block constructs keep their context.
-          if (item.kind === "assistant_message") return blocksBySource.get(item) ?? [item];
-          return [item.kind === "user_message" ? presentUserMessage(item) : item];
-        },
+        (item) => nativeBlocks(item, input.serverId),
       );
       historySource = input.tail;
       historyTransform = input.transform;
@@ -123,7 +170,7 @@ export function createStreamPresentation() {
     const promoted: StreamItem[] = [];
     const nextLiveSources = new Map<string, AssistantMessageItem>();
     for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
-      const blocks = nativeBlocks(item);
+      const blocks = nativeBlocks(item, input.serverId);
       if (item.kind === "assistant_message") nextLiveSources.set(item.id, item);
       if (item.kind === "assistant_message" && blocks.length > 1) {
         promoted.push(...blocks.slice(0, -1));
