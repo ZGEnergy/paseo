@@ -24,7 +24,7 @@ function resolveServerRunnerFromDir(currentDir: string): string | null {
 }
 
 function resolveDaemonRunnerEntry(): string {
-  const serverExportPath = require.resolve("@getpaseo/server");
+  const serverExportPath = require.resolve("@getpaseo/server/daemon-control");
   let currentDir = path.dirname(serverExportPath);
 
   while (true) {
