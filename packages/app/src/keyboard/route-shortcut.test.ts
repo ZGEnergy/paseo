@@ -18,6 +18,7 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
     pathname: "/h/srv/workspace/ws-2",
     isMobile: false,
     sidebarShortcutTargets: SIDEBAR_TARGETS,
+    sidebarNavigationTargets: SIDEBAR_TARGETS,
     navigationActiveWorkspace: null,
     commandCenterOpen: false,
     shortcutsDialogOpen: false,
@@ -192,7 +193,7 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         { action: "workspace.navigate.relative", payload: { delta: 1 } },
         makeCtx({
           pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
-          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          sidebarNavigationTargets: STATUS_VISUAL_TARGETS,
           navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
         }),
       ),
@@ -209,7 +210,7 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         { action: "workspace.navigate.relative", payload: { delta: -1 } },
         makeCtx({
           pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
-          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          sidebarNavigationTargets: STATUS_VISUAL_TARGETS,
           navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
         }),
       ),
@@ -226,7 +227,7 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         { action: "workspace.navigate.relative", payload: { delta: -1 } },
         makeCtx({
           pathname: "/h/srv/workspace/running-old",
-          sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
+          sidebarNavigationTargets: STATUS_VISUAL_TARGETS,
           navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-old" },
         }),
       ),
@@ -267,9 +268,51 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
     expect(
       routeKeyboardShortcut(
         { action: "workspace.navigate.relative", payload: { delta: 1 } },
-        makeCtx({ sidebarShortcutTargets: [] }),
+        makeCtx({ sidebarNavigationTargets: [] }),
       ),
     ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+
+  it("walks past the ninth workspace, which the digit jump cannot reach", () => {
+    const manyTargets = Array.from({ length: 12 }, (_, i) => ({
+      serverId: "srv",
+      workspaceId: `ws-${i + 1}`,
+    }));
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.relative", payload: { delta: 1 } },
+        makeCtx({
+          sidebarShortcutTargets: manyTargets.slice(0, 9),
+          sidebarNavigationTargets: manyTargets,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "ws-9" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "ws-10",
+    });
+  });
+
+  it("wraps from the last workspace past the shortcut limit back to the first", () => {
+    const manyTargets = Array.from({ length: 12 }, (_, i) => ({
+      serverId: "srv",
+      workspaceId: `ws-${i + 1}`,
+    }));
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.relative", payload: { delta: 1 } },
+        makeCtx({
+          sidebarShortcutTargets: manyTargets.slice(0, 9),
+          sidebarNavigationTargets: manyTargets,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "ws-12" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "ws-1",
+    });
   });
 
   it("returns none when the delta payload is missing", () => {

@@ -80,6 +80,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
 
     useKeyboardShortcutsStore.setState({
       sidebarShortcutWorkspaceTargets: [],
+      sidebarNavigationWorkspaceTargets: [],
     });
     useSidebarCollapsedSectionsStore.setState({
       collapsedProjectKeys: new Set(),
@@ -134,6 +135,10 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-1" },
+      { serverId: "srv", workspaceId: "ws-2" },
+    ]);
+    expect(useKeyboardShortcutsStore.getState().sidebarNavigationWorkspaceTargets).toEqual([
       { serverId: "srv", workspaceId: "ws-1" },
       { serverId: "srv", workspaceId: "ws-2" },
     ]);

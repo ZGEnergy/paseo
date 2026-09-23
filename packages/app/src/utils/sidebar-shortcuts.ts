@@ -10,7 +10,10 @@ export interface SidebarShortcutWorkspaceTarget {
 }
 
 export interface SidebarShortcutModel {
+  /** First `shortcutLimit` targets only, because the digit jump has 9 keys. */
   shortcutTargets: SidebarShortcutWorkspaceTarget[];
+  /** Every visible target, in visual order, for previous/next navigation. */
+  navigationTargets: SidebarShortcutWorkspaceTarget[];
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
 
@@ -62,6 +65,7 @@ export function buildSidebarShortcutSections(input: {
 }): SidebarShortcutModel {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
+  const navigationTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
   for (const section of input.sections) {
@@ -70,17 +74,20 @@ export function buildSidebarShortcutSections(input: {
     }
 
     for (const workspace of section.workspaces) {
+      const target = createShortcutTarget(workspace);
+      navigationTargets.push(target);
+
       if (shortcutTargets.length >= maxShortcuts) {
-        break;
+        continue;
       }
 
       const shortcutNumber = shortcutTargets.length + 1;
-      shortcutTargets.push(createShortcutTarget(workspace));
+      shortcutTargets.push(target);
       shortcutIndexByWorkspaceKey.set(workspace.workspaceKey, shortcutNumber);
     }
   }
 
-  return { shortcutTargets, shortcutIndexByWorkspaceKey };
+  return { shortcutTargets, navigationTargets, shortcutIndexByWorkspaceKey };
 }
 
 export function getRelativeSidebarShortcutTarget(input: {
