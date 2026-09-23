@@ -10,6 +10,7 @@ export interface ShortcutRoutingContext {
   pathname: string;
   isMobile: boolean;
   sidebarShortcutTargets: ReadonlyArray<SidebarShortcutWorkspaceTarget>;
+  sidebarNavigationTargets: ReadonlyArray<SidebarShortcutWorkspaceTarget>;
   navigationActiveWorkspace: SidebarShortcutWorkspaceTarget | null;
   commandCenterOpen: boolean;
   shortcutsDialogOpen: boolean;
@@ -135,12 +136,12 @@ function routeWorkspaceNavigateRelative(
   ctx: ShortcutRoutingContext,
 ): ShortcutAction {
   if (!hasPayloadKey(payload, "delta")) return NONE;
-  if (ctx.sidebarShortcutTargets.length === 0) return NONE;
+  if (ctx.sidebarNavigationTargets.length === 0) return NONE;
 
   const currentWorkspace =
     ctx.navigationActiveWorkspace ?? parseHostWorkspaceRouteFromPathname(ctx.pathname);
   const target = getRelativeSidebarShortcutTarget({
-    targets: ctx.sidebarShortcutTargets,
+    targets: ctx.sidebarNavigationTargets,
     currentTarget: currentWorkspace
       ? { serverId: currentWorkspace.serverId, workspaceId: currentWorkspace.workspaceId }
       : null,
