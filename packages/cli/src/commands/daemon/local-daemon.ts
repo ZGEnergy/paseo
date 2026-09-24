@@ -90,8 +90,13 @@ export function buildCliLifecycleEnvironment(
 ): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = { ...env };
   next.PASEO_LIFECYCLE_MANAGER = next.PASEO_LIFECYCLE_MANAGER ?? "cli";
-  next.PASEO_LIFECYCLE_DESCRIPTOR =
-    next.PASEO_LIFECYCLE_DESCRIPTOR ?? JSON.stringify(buildLaunchDescriptor(home));
+  try {
+    next.PASEO_LIFECYCLE_DESCRIPTOR =
+      next.PASEO_LIFECYCLE_DESCRIPTOR ?? JSON.stringify(buildLaunchDescriptor(home));
+  } catch {
+    // An unreadable config fails the launch inside the supervisor, whose
+    // startup-failure path records the cause in the log the launcher reports.
+  }
   next.PASEO_LIFECYCLE_SOURCE_REVISION =
     next.PASEO_LIFECYCLE_SOURCE_REVISION ??
     next.PASEO_SOURCE_REVISION ??

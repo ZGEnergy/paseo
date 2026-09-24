@@ -79,14 +79,11 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     };
   }
   if (type === "paseo:ready") {
-    const listen = (msg as { listen?: unknown }).listen;
-    const serverId = (msg as { serverId?: unknown }).serverId;
-    if (
-      typeof listen !== "string" ||
-      listen.trim().length === 0 ||
-      typeof serverId !== "string" ||
-      serverId.trim().length === 0
-    ) {
+    const { listen, serverId } = msg as { listen?: unknown; serverId?: unknown };
+    if (typeof listen !== "string" || listen.trim().length === 0) {
+      return null;
+    }
+    if (typeof serverId !== "string" || serverId.trim().length === 0) {
       return null;
     }
     return { type: "paseo:ready", listen, serverId };
@@ -299,7 +296,12 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
           serverId: lifecycleMessage.serverId,
         });
         publication = publication
-          .then(() => options.onWorkerReady?.(lifecycleMessage))
+          .then(() =>
+            options.onWorkerReady?.({
+              listen: lifecycleMessage.listen,
+              serverId: lifecycleMessage.serverId,
+            }),
+          )
           .catch((error) => {
             lifecycleFailed = true;
             const message = error instanceof Error ? error.message : String(error);
