@@ -184,6 +184,7 @@ Codex MultiAgentV2 real tests use local Codex authentication rather than the Ope
 Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.
 
 - Run only the file you changed: `npx vitest run <path> --bail=1`
+- Run an app test from `packages/app`, not from the repo root. Only `packages/app/vitest.config.ts` supplies the app setup file and the inlined deps; from the root the same file dies with `SyntaxError: Unexpected token '<'` inside `expo-router`.
 - Never run `npm run test` for a whole workspace unless asked.
 - For a broad sweep, redirect to a file and read it after: `npx vitest run <path> --bail=1 > /tmp/test-output.txt 2>&1`
 - Never re-run a suite another agent already reported green.

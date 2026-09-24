@@ -16,7 +16,7 @@ npm run dev:desktop
 Root checkout dev is intentionally split across terminals:
 
 - `npm run dev:server` runs the daemon on `127.0.0.1:6768`.
-- `npm run dev:app` runs Expo on `http://localhost:8081` and connects to the dev daemon.
+- `npm run dev:app` runs Expo on `http://localhost:8081` and connects to the dev daemon. `EXPO_PORT=8090 npm run dev:app` moves Metro when another process already holds `8081`.
 - `npm run dev:desktop` runs its own Electron-flavored Expo server on the first free port from `8082` through `8089`. It never claims port `8081`.
 
 Desktop dev launches its desktop-managed daemon with `PASEO_NODE_ENV=development`,
@@ -536,6 +536,12 @@ The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI
 ## Built workspace packages
 
 Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.
+
+A fresh checkout or a new git worktree has no `dist/` yet, so `npm install` alone does not make it testable. Vitest fails with `Cannot find package '@getpaseo/protocol/<subpath>'` and the lefthook pre-commit typecheck fails for `@getpaseo/desktop` and `@getpaseo/cli`. Build once before you test or commit there:
+
+```bash
+npm run build:protocol && npm run build:client && npm run build:app-deps && npm run build:server
+```
 
 `npm run dev:server` builds the server-side workspace packages once, then keeps `@getpaseo/protocol` and `@getpaseo/client` fresh with TypeScript watch builds while the daemon runs. If you change protocol schemas or client code outside that watch workflow, rebuild the producer before trusting runtime behavior.
 
