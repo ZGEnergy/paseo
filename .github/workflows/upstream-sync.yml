@@ -2,7 +2,8 @@ name: Upstream sync
 
 on:
   schedule:
-    - cron: "17 2 * * *"
+    - cron: "30 5 * * *"
+      timezone: "America/Denver"
   workflow_dispatch:
 
 permissions:
