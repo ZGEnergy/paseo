@@ -113,6 +113,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  onAbort: (() => void) | null = null;
+  private heldStateRequests: Array<() => void> | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -244,6 +246,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+    // OMP can stream a turn's teardown before it answers the abort request.
+    this.onAbort?.();
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -252,8 +256,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
       if (this.getStateRequestCount >= waiter.count) waiter.resolve();
       else this.stateRequestWaiters.push(waiter);
     }
-    if (this.holdStateChecks) {
-      await new Promise<void>((resolve) => this.heldStateChecks.push(resolve));
+    if (this.heldStateRequests) {
+      const held = this.heldStateRequests;
+      await new Promise<void>((resolve) => held.push(resolve));
     }
     if (this.getStateError) {
       throw this.getStateError;
@@ -265,15 +270,18 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.state;
   }
 
-  queueStateReports(states: OmpSessionState[]): void {
-    this.stateReports.push(...states);
+  /** Holds every state request until the returned function releases them. */
+  holdStateRequests(): () => void {
+    const held: Array<() => void> = [];
+    this.heldStateRequests = held;
+    return () => {
+      this.heldStateRequests = null;
+      for (const resolve of held.splice(0)) resolve();
+    };
   }
 
-  holdStateChecks = false;
-  private readonly heldStateChecks: Array<() => void> = [];
-
-  releaseStateChecks(): void {
-    for (const resolve of this.heldStateChecks.splice(0)) resolve();
+  queueStateReports(states: OmpSessionState[]): void {
+    this.stateReports.push(...states);
   }
 
   waitForStateRequests(count: number): Promise<void> {

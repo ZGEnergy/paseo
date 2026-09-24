@@ -698,6 +698,11 @@ function preferErroredOmpPayload(
   return latestOmpErrorMessage(current) ? current : incoming;
 }
 
+function isOmpAbortedTerminalResponse(messages: OmpAgentMessage[]): boolean {
+  const latestAssistant = messages.findLast((message) => message.role === "assistant");
+  return latestAssistant?.stopReason?.toLowerCase() === "aborted";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -2302,9 +2307,6 @@ export class OmpAgentSession implements AgentSession {
           });
         }
       }
-      if (!this.activeTurnHasUserMessage) {
-        this.completeTurn(turnId, []);
-      }
       return;
     }
 
@@ -2412,6 +2414,19 @@ export class OmpAgentSession implements AgentSession {
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
     this.forceSettleDeferredTaskCalls();
     this.resetActiveTurn();
+    // OMP reports a stopped turn as a terminal response carrying its interrupt
+    // text as an error. That is the user's own Stop, not a failed turn.
+    if (isOmpAbortedTerminalResponse(messages)) {
+      this.usagePoller.stopTurn();
+      this.terminalizeActiveWork({ terminalizeSubagents: false });
+      this.emit({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId,
+        reason: "interrupted",
+      });
+      return;
+    }
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
