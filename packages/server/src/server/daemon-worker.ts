@@ -6,7 +6,6 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
-import { getOrCreateServerId } from "./server-id.js";
 
 process.title = "Paseo Daemon";
 
@@ -342,7 +341,7 @@ async function main() {
     sendSupervisorLifecycleMessage({
       type: "paseo:ready",
       listen,
-      serverId: getOrCreateServerId(paseoHome, { logger }),
+      serverId: daemon.getServerId(),
     });
   } catch (err) {
     logger.fatal({ err }, "Daemon failed to start listening");

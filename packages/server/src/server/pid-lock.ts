@@ -44,6 +44,7 @@ export const pidLockInfoSchema = z.object({
   hostname: z.string(),
   uid: z.number(),
   listen: z.string().nullable(),
+  serverId: z.string().nullable().optional(),
   desktopManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
   lifecycle: pidLifecycleSchema.optional(),
@@ -58,6 +59,7 @@ export interface AcquirePidLockOptions {
 
 export interface UpdatePidLockPatch {
   listen?: string | null;
+  serverId?: string | null;
   lifecycle?: PidLifecycle;
 }
 
