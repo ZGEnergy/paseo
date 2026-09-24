@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 
+import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type {
   OmpNoTurnScheduler,
@@ -8,6 +9,7 @@ import type {
   OmpProviderIdleDecision,
   OmpProviderIdleScheduler,
 } from "./agent.js";
+import type { OmpAgentMessage } from "./rpc-types.js";
 import { createOmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
@@ -33,6 +35,29 @@ afterEach(() => {
   manualIdleSchedulers.length = 0;
   expect(violations).toEqual([]);
 });
+
+const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
+  "turn_started",
+  "turn_completed",
+  "turn_failed",
+  "turn_canceled",
+]);
+
+function isTurnLifecycle(type: AgentStreamEvent["type"]): boolean {
+  return TURN_LIFECYCLE_EVENTS.has(type);
+}
+
+// What OMP reports for a turn the user stopped: an error message on a terminal
+// response whose stop reason says the request was aborted.
+const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
+  role: "assistant",
+  content: [],
+  provider: "ai-harness-omp",
+  model: "glm-5.3-flash-high",
+  responseId: "chatcmpl-aborted",
+  stopReason: "aborted",
+  errorMessage: "Interrupted by user",
+};
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
   expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
@@ -1395,14 +1420,14 @@ describe("OMP agent client and session", () => {
     // Park the gate inside get_state, which carries the RPC timeout, and let the
     // turn change while it is in there.
     omp.reportProviderState({ isStreaming: false, isCompacting: false });
-    omp.runtime().holdStateChecks = true;
+    const releaseStateChecks = omp.runtime().holdStateRequests();
     scheduler.retryAll();
     await omp.waitForProviderStateChecks(2);
     await omp.interrupt();
     await completion;
     const completedAfterCancel = omp.completedTurnCount();
 
-    omp.runtime().releaseStateChecks();
+    releaseStateChecks();
     for (let flush = 0; flush < 5; flush += 1) await waitForImmediate();
     expect(omp.completedTurnCount()).toBe(completedAfterCancel);
   });
@@ -1683,6 +1708,25 @@ describe("OMP agent client and session", () => {
     await expect(
       omp.runPromptAfterExtensionNotice("hello OMP", "model turn completed"),
     ).resolves.toMatchObject({ finalText: expect.stringContaining("model turn completed") });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("does not complete a turn when a custom message arrives before its user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello OMP");
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptCustomMessage("startup notice");
+
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.acceptPrompt("hello OMP", "user-1");
+    runtime.streamAssistantText("model turn completed");
+    runtime.finishTurn();
+    await waitForImmediate();
+
     expect(omp.completedTurnCount()).toBe(1);
   });
 
@@ -2066,6 +2110,74 @@ describe("OMP agent client and session", () => {
       },
     });
     expect(omp.subagentUpserts().at(-1)).toEqual({ id: "child-1", status: "completed" });
+  });
+
+  test("an interrupt that OMP reports as an aborted turn cancels instead of failing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("do something long");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "sleep 30" },
+    });
+    runtime.streamAssistantText("working on it");
+    // OMP ends the turn with an aborted terminal response before answering the abort.
+    runtime.onAbort = () => {
+      runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+    expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("an aborted turn that settles after the interrupt cancels exactly once", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("do something long");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("working on it");
+    // The provider-idle check is still in flight when the abort is acknowledged.
+    const releaseState = runtime.holdStateRequests();
+    runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+    runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+
+    await omp.interrupt();
+    releaseState();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+  });
+
+  test("an autonomous OMP turn aborted with no client turn id cancels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("autonomous work");
+    runtime.onAbort = () => {
+      runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
   });
 
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {

@@ -157,7 +157,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -297,6 +297,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+  }
+
+  private requestStopWork(command: OmpRpcCommand): Promise<void> {
+    return this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
   }
 
   private emit(event: OmpRuntimeEvent): void {
