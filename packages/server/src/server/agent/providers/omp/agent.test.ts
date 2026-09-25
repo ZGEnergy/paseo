@@ -69,7 +69,6 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     rpcTimeoutMs: 90_000,
   });
 });
-
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
