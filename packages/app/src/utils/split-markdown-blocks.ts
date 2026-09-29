@@ -254,11 +254,12 @@ export function splitMarkdownBlocks(
 
   for (const [index, line] of lines.entries()) {
     const isBlankLine = line.trim().length === 0;
-    const isInsideProtectedBlock =
-      protectedBlockState.fenceCharacter !== null ||
-      protectedBlockState.openDelimiterClose !== null;
+    const isInsideExtensionBlock = protectedBlockState.openDelimiterClose !== null;
 
-    if (isBlankLine && (isInsideProtectedBlock || structuralBlankLines.has(index))) {
+    // Extension blocks have no parser token, so their blanks would read as separators;
+    // keep them wholesale. Fence blanks follow the parser's structural verdict, which
+    // also lets upstream's held-back streaming indent stay out of the block.
+    if (isBlankLine && (isInsideExtensionBlock || structuralBlankLines.has(index))) {
       currentLines.push(line);
       continue;
     }
@@ -270,6 +271,8 @@ export function splitMarkdownBlocks(
       continue;
     }
 
+    const isInsideProtectedBlock =
+      protectedBlockState.fenceCharacter !== null || isInsideExtensionBlock;
     if (!isInsideProtectedBlock && sawBlockSeparator) {
       blocks.push({ text: currentLines.join("\n"), hasExtensionBlock: currentHasExtensionBlock });
       currentLines = [];

@@ -8,7 +8,6 @@ import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type {
-  AgentLaunchContext,
   AgentMode,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -36,6 +35,7 @@ import { features } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
+
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
   readonly capabilities = V2_CAPABILITIES;
@@ -91,6 +91,11 @@ export class OpenCodeV2Session implements AgentSession {
         await this.reconcile();
         return { info: this.info, history: this.history };
       },
+      reportReconciliationError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode turn reconciliation failed; retrying",
+        ),
       clearPermissions: async () => {
         for (const request of this.permissions.list())
           await this.permissions.respondToPermission(request.id, { behavior: "deny" });
@@ -106,8 +111,9 @@ export class OpenCodeV2Session implements AgentSession {
   private get client() {
     return this.connection.client;
   }
-  async initialize(launch?: AgentLaunchContext) {
-    this.launchEnv = launch?.env;
+  async initialize(environment?: Record<string, string>) {
+    // OpenCode replaces the whole local shell environment, rather than overlaying it.
+    this.launchEnv = environment;
     this.watchExit(this.connection);
     await this.configureConnection();
     const location = { directory: this.config.cwd };
@@ -130,8 +136,6 @@ export class OpenCodeV2Session implements AgentSession {
     await waitForLocationReady({ client: this.client, location, signal: this.abort.signal });
     if (this.requiresPaseoPlugin)
       await awaitPaseoPlugin({ client: this.client, location, signal: this.abort.signal });
-    if (this.launchEnv)
-      await this.client.session.environment({ sessionID: this.id, variables: this.launchEnv });
     for (const [server, config] of Object.entries(this.config.mcpServers ?? {})) {
       await this.client.mcp.add({
         server,
@@ -277,25 +281,48 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async setModel(model: string | null) {
     await this.reconnectIfExited();
-    const selected = model
-      ? modelRef(model, this.config.thinkingOptionId)
-      : (await this.client.model.default({ location: { directory: this.config.cwd } })).data;
+    const location = { directory: this.config.cwd };
+    const selected = model ? modelRef(model) : (await this.client.model.default({ location })).data;
     if (!selected) throw new Error("OpenCode has no default model");
-    await this.client.session.switchModel({
-      sessionID: this.id,
-      model: {
-        id: selected.id,
-        providerID: selected.providerID,
-        variant: this.config.thinkingOptionId,
-      },
-    });
+    const catalog = await this.client.model.list({ location });
+    const target = catalog.data.find(
+      (entry) =>
+        entry.enabled && entry.providerID === selected.providerID && entry.id === selected.id,
+    );
+    if (!target)
+      throw new Error(`OpenCode model unavailable: ${selected.providerID}/${selected.id}`);
+    const retainedVariant = this.config.thinkingOptionId;
+    const variant =
+      retainedVariant !== "default" && target.variants.some((entry) => entry.id === retainedVariant)
+        ? retainedVariant
+        : undefined;
+    const nextModel = {
+      id: selected.id,
+      providerID: selected.providerID,
+      ...(variant ? { variant } : {}),
+    };
+    await this.client.session.switchModel({ sessionID: this.id, model: nextModel });
+    this.info.model = nextModel;
     this.config.model = model ?? undefined;
+    this.config.thinkingOptionId = variant;
+    this.emit({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: variant ?? null,
+    });
     this.emit({
       type: "model_changed",
       provider: "opencode",
-      runtimeInfo: await this.getRuntimeInfo(),
+      runtimeInfo: {
+        provider: "opencode",
+        sessionId: this.id,
+        model: `${selected.providerID}/${selected.id}`,
+        modeId: this.info.agent ?? null,
+        thinkingOptionId: variant ?? null,
+      },
     });
   }
+
   async setThinkingOption(variant: string | null) {
     await this.reconnectIfExited();
     const model = this.info.model;
@@ -389,10 +416,13 @@ export class OpenCodeV2Session implements AgentSession {
     }
   }
   private async reconcileConnection() {
+    // Session environments are process-local. Reapply this agent's snapshot before
+    // reconciling a new connection, including event-stream reconnections.
+    if (this.launchEnv)
+      await this.client.session.environment({ sessionID: this.id, variables: this.launchEnv });
     await this.reconcile();
     await this.children.reconcile(this.id);
-    const active = await this.client.session.active();
-    if (active[this.id]) this.turns.observeActiveTurn();
+    await this.turns.reconcile();
   }
   private scheduleReconcile() {
     if (this.refreshTimer || this.closed) return;
@@ -435,11 +465,8 @@ export class OpenCodeV2Session implements AgentSession {
       return;
     }
     this.permissions.observe(event);
-    if (event.type === "session.execution.failed")
-      this.turns.executionError = event.data.error.message;
+    this.turns.observe(event);
     this.scheduleReconcile();
-    if (event.type !== "session.execution.started" || this.turns.id) return;
-    this.turns.observeActiveTurn();
   }
   private async consume(ready: () => void, fail: (error: unknown) => void) {
     const signal = AbortSignal.any([this.abort.signal, this.streamAbort.signal]);
@@ -476,6 +503,7 @@ export class OpenCodeV2Session implements AgentSession {
     if (this.closed) return;
     this.closed = true;
     this.abort.abort();
+    this.turns.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     await this.stream;
