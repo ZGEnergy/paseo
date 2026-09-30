@@ -72,15 +72,19 @@ export class OmpHarness {
       now?: () => number;
       noTurnScheduler?: OmpNoTurnScheduler;
       usagePollScheduler?: OmpUsagePollScheduler;
+      providerIdleDeadlineMs?: number;
+      runtimeEnv?: Record<string, string>;
     } = {},
   ) {
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
+      runtimeSettings: { env: options.runtimeEnv },
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
       now: options.now,
       noTurnScheduler: options.noTurnScheduler,
       usagePollScheduler: options.usagePollScheduler,
+      providerIdleDeadlineMs: options.providerIdleDeadlineMs,
     });
   }
 
@@ -151,6 +155,20 @@ export class OmpHarness {
 
   capabilities() {
     return this.client.capabilities;
+  }
+
+  persistence() {
+    return this.requireSession().describePersistence();
+  }
+
+  async replayHistory(handle: AgentPersistenceHandle): Promise<AgentStreamEvent[]> {
+    const session = await this.client.resumeSession(handle, undefined, undefined, {
+      purpose: "history",
+    });
+    const events: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) events.push(event);
+    await session.close();
+    return events;
   }
 
   async runPrompt(
@@ -476,6 +494,36 @@ export class OmpHarness {
     return await this.requireSession().setMode(modeId);
   }
 
+  currentMode() {
+    return this.requireSession().getCurrentMode();
+  }
+
+  runtimeLaunches() {
+    return this.omp.recordedLaunches;
+  }
+
+  runtimeSessions() {
+    return this.omp.allSessions();
+  }
+
+  processExit(error: string): void {
+    this.omp.latestSession().emit({ type: "process_exit", error });
+  }
+
+  failNextStart(error: Error): void {
+    this.omp.failNextStart(error);
+  }
+
+  turnFailures(): string[] {
+    return this.events.flatMap((event) => (event.type === "turn_failed" ? [event.error] : []));
+  }
+
+  threadStartedSessionIds(): string[] {
+    return this.events.flatMap((event) =>
+      event.type === "thread_started" ? [event.sessionId] : [],
+    );
+  }
+
   async rewind(messageId: string, restoredPrompt: string): Promise<void> {
     this.omp.latestSession().branchResponse = { text: restoredPrompt };
     await this.requireSession().revertConversation({ messageId });
@@ -494,6 +542,15 @@ export class OmpHarness {
     const promptStarted = this.omp.latestSession().nextPrompt();
     await this.requireSession().startTurn(message);
     await promptStarted;
+  }
+
+  async startTurn(message: string): Promise<void> {
+    await this.requireSession().startTurn(message);
+    await waitForImmediate();
+  }
+
+  startTurnDetached(message: string) {
+    return this.requireSession().startTurn(message);
   }
 
   async interrupt(): Promise<void> {
