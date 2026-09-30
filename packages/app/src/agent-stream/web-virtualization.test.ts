@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import {
   clearAssistantImageMetadataCache,
@@ -127,8 +128,8 @@ describe("splitWebVirtualizedHistory", () => {
 
 describe("estimateStreamItemHeight", () => {
   it("uses compact estimates for collapsed tool sequence rows", () => {
-    expect(estimateStreamItemHeight(toolCall("tool", 1))).toBe(40);
-    expect(estimateStreamItemHeight(thought("thought", 2))).toBe(40);
+    expect(estimateStreamItemHeight(toolCall("tool", 1), DEFAULT_CONTENT_MAX_WIDTH)).toBe(40);
+    expect(estimateStreamItemHeight(thought("thought", 2), DEFAULT_CONTENT_MAX_WIDTH)).toBe(40);
   });
 
   it("uses a larger estimate for user messages with image attachments", () => {
@@ -150,7 +151,7 @@ describe("estimateStreamItemHeight", () => {
       ],
     };
 
-    expect(estimateStreamItemHeight(item)).toBe(220);
+    expect(estimateStreamItemHeight(item, DEFAULT_CONTENT_MAX_WIDTH)).toBe(220);
   });
 
   it("uses cached assistant image metadata when available", () => {
@@ -169,7 +170,7 @@ describe("estimateStreamItemHeight", () => {
       timestamp: createTimestamp(2),
     };
 
-    expect(estimateStreamItemHeight(item)).toBeGreaterThan(220);
+    expect(estimateStreamItemHeight(item, DEFAULT_CONTENT_MAX_WIDTH)).toBeGreaterThan(220);
   });
 
   it("finds a host-keyed markdown block measurement", () => {
@@ -188,7 +189,7 @@ describe("estimateStreamItemHeight", () => {
       timestamp: createTimestamp(3),
     };
 
-    expect(estimateStreamItemHeight(item, "host-a")).toBe(124);
+    expect(estimateStreamItemHeight(item, 820, "host-a")).toBe(124);
   });
 });
 
