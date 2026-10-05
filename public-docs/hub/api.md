@@ -1,6 +1,6 @@
 ---
 title: Hub public API
-description: Use organization credentials to install triggers, manage legacy configuration, dispatch runs, and enroll daemons.
+description: Use REST automation and OAuth MCP clients with Paseo Hub.
 nav: Public API
 order: 79
 category: Hub
@@ -8,7 +8,7 @@ category: Hub
 
 # Hub public API
 
-The Hub public API lets automation operate on triggers, projects, and daemons in one
+The REST API lets automation operate on triggers, projects, and daemons in one
 organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 `https://hub.example.com`.
 
@@ -20,6 +20,8 @@ organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 These are the canonical reference endpoints for the hosted Paseo Hub. A self-hosted Hub exposes the same `/api/reference` and `/api/openapi.json` paths on its own origin.
 
 ## Authentication
+
+This section describes REST credentials. The [Paseo Agent Connector](#paseo-agent-connector) uses a separate OAuth connection for coding agents.
 
 Run `paseo hub login [origin]` for interactive CLI access. After browser approval, Paseo stores a durable, revocable organization credential under `PASEO_HOME` for that exact origin. Without an explicit origin, the CLI uses `PASEO_HUB_URL`, then the active stored login, then `https://hub.paseo.sh`.
 
@@ -64,6 +66,75 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 ```
 
 A valid key without the scope required by an endpoint returns `403` in the same format.
+
+## Paseo Agent Connector
+
+The optional Paseo Agent Connector lets a remote MCP client launch and follow coding agents on a Hub-enrolled machine. It requires a self-hosted Hub build that includes this feature. Check that build's release notes before configuring it.
+
+### Enable the connector
+
+Set these values on Hub:
+
+```dotenv
+PASEO_HUB_PASEO_CONNECTOR=enabled
+PASEO_HUB_APP_URL=https://hub.example.com
+```
+
+The connector is off by default. Public deployments require HTTPS; HTTP is allowed only on loopback. Use a stable public origin and a persistent installation directory for Hub and the daemon. Do not run long-lived services from a disposable worktree or delete their working directories.
+
+Enroll the target daemon with [Hub execution permission](/docs/hub/daemons). Keep the daemon's existing Hub relationship and private network listener. The remote client connects to Hub; it does not need a local Paseo installation or a public daemon port.
+
+Confirm that `https://hub.example.com/.well-known/oauth-protected-resource/mcp/paseo` returns JSON.
+
+### Connect an MCP client
+
+1. Add `https://hub.example.com/mcp/paseo` as a remote MCP server.
+2. Select OAuth. Leave optional client ID and secret fields empty when the client supports dynamic registration.
+3. Sign in to Hub and replace any temporary bootstrap password.
+4. Select a connected machine from an organization where you are an owner or admin.
+5. Enter the absolute project directory on that remote machine.
+6. Review the machine, directory and requested permissions, then approve.
+
+Client availability depends on its own account and workspace policies. Install and enable the connection for the agent that will use it.
+
+### Keep access after token expiry
+
+For full agent access with automatic renewal, request:
+
+```text
+paseo:read paseo:run paseo:cancel offline_access
+```
+
+| Scope            | Access                                                                    |
+| ---------------- | ------------------------------------------------------------------------- |
+| `paseo:read`     | Inspect this connection, available runtimes and this connection's agents. |
+| `paseo:run`      | Start agents and send follow-up messages.                                 |
+| `paseo:cancel`   | Interrupt a running turn without deleting its session.                    |
+| `offline_access` | Receive a refresh token for access beyond one hour.                       |
+
+Registration must allow both `authorization_code` and `refresh_token` grants. Authorization must include `offline_access`. Consent then says **Until you revoke it**.
+
+Access tokens last one hour. Refresh tokens last 30 days and rotate on use; the client must retain the newest returned refresh token. `get_connection` reports tool permissions, not the `offline_access` renewal scope.
+
+If the client reports `oauth_refresh_token_missing`, correct its registration and requested scopes, then authorize again. Recreate the app connection if it caches old discovery or registration. An access-only grant cannot gain a refresh token retroactively.
+
+### Work with agents
+
+The tools are `get_connection`, `list_runtimes`, `start_agent`, `list_agents`, `get_agent`, `send_agent_message` and `cancel_agent`.
+
+Use the runtime IDs, models and modes returned by `list_runtimes`. A ready catalog entry does not prove a process can start. If launch fails, inspect the remote daemon's startup error, executable and working directory; changing the MCP client on your computer does not repair the remote runtime.
+
+Generate one UUID `request_key` for each intended launch or message. Retry the same work with the same key. Changed work with that key is a conflict. Recorded accepted or unresolved results remain recoverable while a machine or runtime is temporarily unavailable, provided the connection remains authorized.
+
+If an outcome is unknown, inspect the returned operation ID instead of issuing a replacement request key. A replacement can duplicate work whose acknowledgement was lost.
+
+Each connection can reach only the agents it created. A new connection does not inherit an older connection's agents. There are no terminal, archive, scheduling, administration or permission-approval tools.
+
+### Revoke access
+
+Open **Connected apps** at `https://hub.example.com/oauth/connections` and revoke the intended connection. This blocks its further calls and token refresh. It does not stop agents already running.
+
+Changing Hub's public origin changes the OAuth issuer and resource audience. Clients must link again at the new address.
 
 ## Trigger validation and installation
 

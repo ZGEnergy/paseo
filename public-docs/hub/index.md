@@ -48,6 +48,7 @@ The file names the app connection, allowed user, daemon, working directory, agen
 6. [GitHub access](/docs/hub/github)
 7. [Configuration](/docs/hub/configuration)
 8. [Security](/docs/hub/security)
+9. [Paseo Agent Connector](/docs/hub/api#paseo-agent-connector)
 
 If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
