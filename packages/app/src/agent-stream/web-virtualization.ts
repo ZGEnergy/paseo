@@ -1,3 +1,4 @@
+import type { AssistantImageContext } from "@/utils/assistant-image-metadata";
 import type { StreamItem } from "@/types/stream";
 import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-message-height-estimate";
 import {
@@ -43,16 +44,31 @@ export interface WebVirtualizedHistoryWindow {
   mountedEntries: IndexedStreamItem[];
 }
 
-export function estimateStreamItemHeight(
-  item: StreamItem,
-  contentMaxWidth: number,
-  serverId?: string,
-): number {
+interface StreamItemHeightEstimateInput {
+  item: StreamItem;
+  contentMaxWidth: number;
+  imageContext?: AssistantImageContext;
+  serverId?: string;
+}
+
+export function estimateStreamItemHeight({
+  item,
+  contentMaxWidth,
+  imageContext,
+  serverId,
+}: StreamItemHeightEstimateInput): number {
   switch (item.kind) {
     case "user_message":
       return item.images && item.images.length > 0 ? 220 : 96;
     case "assistant_message":
-      return estimateAssistantMessageHeightFromCache(item.text, contentMaxWidth, serverId) ?? 220;
+      return (
+        estimateAssistantMessageHeightFromCache({
+          markdown: item.text,
+          contentMaxWidth,
+          imageContext,
+          serverId,
+        }) ?? 220
+      );
     case "tool_call":
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "thought":

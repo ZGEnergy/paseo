@@ -127,8 +127,18 @@ describe("splitWebVirtualizedHistory", () => {
 
 describe("estimateStreamItemHeight", () => {
   it("uses compact estimates for collapsed tool sequence rows", () => {
-    expect(estimateStreamItemHeight(toolCall("tool", 1), DEFAULT_CONTENT_MAX_WIDTH)).toBe(40);
-    expect(estimateStreamItemHeight(thought("thought", 2), DEFAULT_CONTENT_MAX_WIDTH)).toBe(40);
+    expect(
+      estimateStreamItemHeight({
+        item: toolCall("tool", 1),
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
+    ).toBe(40);
+    expect(
+      estimateStreamItemHeight({
+        item: thought("thought", 2),
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
+    ).toBe(40);
   });
 
   it("uses a larger estimate for user messages with image attachments", () => {
@@ -150,7 +160,40 @@ describe("estimateStreamItemHeight", () => {
       ],
     };
 
-    expect(estimateStreamItemHeight(item, DEFAULT_CONTENT_MAX_WIDTH)).toBe(220);
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH })).toBe(
+      220,
+    );
+  });
+
+  it("uses local image dimensions only from the row's server and workspace", () => {
+    clearAssistantImageMetadataCache();
+    const imageContext = { serverId: "server-one", workspaceRoot: "/workspace/one" };
+    setAssistantImageMetadata(
+      { source: "portrait.png", ...imageContext },
+      { width: 800, height: 1600 },
+    );
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "local-image",
+      text: "![Portrait](portrait.png)",
+      timestamp: createTimestamp(2),
+    };
+
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 608, imageContext })).toBe(1264);
+    expect(
+      estimateStreamItemHeight({
+        item,
+        contentMaxWidth: 608,
+        imageContext: { ...imageContext, workspaceRoot: "/workspace/two" },
+      }),
+    ).toBe(464);
+    expect(
+      estimateStreamItemHeight({
+        item,
+        contentMaxWidth: 608,
+        imageContext: { ...imageContext, serverId: "server-two" },
+      }),
+    ).toBe(464);
   });
 
   it("uses cached assistant image metadata when available", () => {
@@ -169,7 +212,9 @@ describe("estimateStreamItemHeight", () => {
       timestamp: createTimestamp(2),
     };
 
-    expect(estimateStreamItemHeight(item, DEFAULT_CONTENT_MAX_WIDTH)).toBeGreaterThan(220);
+    expect(
+      estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH }),
+    ).toBeGreaterThan(220);
   });
 
   it("finds a host-keyed markdown block measurement", () => {
@@ -188,7 +233,7 @@ describe("estimateStreamItemHeight", () => {
       timestamp: createTimestamp(3),
     };
 
-    expect(estimateStreamItemHeight(item, 820, "host-a")).toBe(124);
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 820, serverId: "host-a" })).toBe(124);
   });
 });
 

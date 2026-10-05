@@ -29,19 +29,27 @@ describe("assistant message height estimate", () => {
     });
 
     expect(
-      estimateAssistantMessageHeightFromCache(
-        "First paragraph\n\nSecond paragraph",
-        DEFAULT_CONTENT_MAX_WIDTH,
-      ),
+      estimateAssistantMessageHeightFromCache({
+        markdown: "First paragraph\n\nSecond paragraph",
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
     ).toBe(97);
   });
 
   it("reads block heights measured at the configured content width", () => {
     setAssistantMarkdownBlockHeight({ block: "Wide paragraph", width: 1584, height: 20 });
 
-    expect(estimateAssistantMessageHeightFromCache("Wide paragraph", 1600)).toBe(44);
     expect(
-      estimateAssistantMessageHeightFromCache("Wide paragraph", DEFAULT_CONTENT_MAX_WIDTH),
+      estimateAssistantMessageHeightFromCache({
+        markdown: "Wide paragraph",
+        contentMaxWidth: 1600,
+      }),
+    ).toBe(44);
+    expect(
+      estimateAssistantMessageHeightFromCache({
+        markdown: "Wide paragraph",
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
     ).toBeNull();
   });
 
@@ -54,10 +62,10 @@ describe("assistant message height estimate", () => {
     );
 
     expect(
-      estimateAssistantMessageHeightFromCache(
-        "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
-        DEFAULT_CONTENT_MAX_WIDTH,
-      ),
+      estimateAssistantMessageHeightFromCache({
+        markdown: "Here is the screenshot\n\n![Screenshot](https://example.com/landscape.png)",
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
     ).toBeGreaterThan(220);
   });
 
@@ -75,7 +83,19 @@ describe("assistant message height estimate", () => {
       serverId: "host-b",
     });
 
-    expect(estimateAssistantMessageHeightFromCache("$$x$$", 820, "host-a")).toBe(124);
-    expect(estimateAssistantMessageHeightFromCache("$$x$$", 820, "host-b")).toBe(64);
+    expect(
+      estimateAssistantMessageHeightFromCache({
+        markdown: "$$x$$",
+        contentMaxWidth: 820,
+        serverId: "host-a",
+      }),
+    ).toBe(124);
+    expect(
+      estimateAssistantMessageHeightFromCache({
+        markdown: "$$x$$",
+        contentMaxWidth: 820,
+        serverId: "host-b",
+      }),
+    ).toBe(64);
   });
 });

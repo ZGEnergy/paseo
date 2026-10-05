@@ -10,6 +10,8 @@ import {
 import { pluginRegistry as registry, selectHostPlugins } from "./registry";
 import type { InstalledPlugin } from "./types";
 
+const audio = { play: async () => 0 };
+
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
@@ -37,7 +39,7 @@ const pluginRegistry = {
     return registry.installCatalog(
       serverId,
       catalog.map((entry) => ({ ...entry, requirements: { paseo: `>=${appPackage.version}` } })),
-      { ...options, client: daemonClient },
+      { ...options, client: daemonClient, audio },
     );
   },
 };

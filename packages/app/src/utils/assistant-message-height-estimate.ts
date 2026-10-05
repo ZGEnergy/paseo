@@ -1,4 +1,7 @@
-import { estimateAssistantMessageHeightFromCache as estimateAssistantImageMessageHeightFromCache } from "@/utils/assistant-image-metadata";
+import {
+  type AssistantMessageHeightEstimateInput,
+  estimateAssistantMessageHeightFromCache as estimateAssistantImageMessageHeightFromCache,
+} from "@/utils/assistant-image-metadata";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 
 const ASSISTANT_MARKDOWN_BLOCK_HEIGHT_CACHE_LIMIT = 1000;
@@ -111,14 +114,15 @@ function estimateAssistantMarkdownBlockHeightFromCache(
   );
 }
 
-export function estimateAssistantMessageHeightFromCache(
-  markdown: string,
-  contentMaxWidth: number,
-  serverId?: string,
-): number | null {
+export function estimateAssistantMessageHeightFromCache({
+  markdown,
+  contentMaxWidth,
+  serverId,
+  imageContext,
+}: AssistantMessageHeightEstimateInput & { serverId?: string }): number | null {
   return (
     estimateAssistantMarkdownBlockHeightFromCache(markdown, contentMaxWidth, serverId) ??
-    estimateAssistantImageMessageHeightFromCache(markdown, contentMaxWidth)
+    estimateAssistantImageMessageHeightFromCache({ markdown, contentMaxWidth, imageContext })
   );
 }
 
