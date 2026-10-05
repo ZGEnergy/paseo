@@ -97,6 +97,8 @@ Confirm that `https://hub.example.com/.well-known/oauth-protected-resource/mcp/p
 
 Client availability depends on its own account and workspace policies. Install and enable the connection for the agent that will use it.
 
+If signup requires email verification, follow either the initial email or a replacement sent with **Resend verification email** to continue the same app-linking request. Organization invitations still need explicit acceptance before they grant access to machines.
+
 ### Keep access after token expiry
 
 For full agent access with automatic renewal, request:
