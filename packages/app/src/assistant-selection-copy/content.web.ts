@@ -7,11 +7,13 @@ import {
 } from "@/utils/rich-clipboard";
 import {
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
+  MARKDOWN_COPY_ALT_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_SOURCE_ATTRIBUTE,
+  MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
@@ -23,6 +25,7 @@ const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
 const messageRowSelector = (messageId: string) => `[data-message-id="${CSS.escape(messageId)}"]`;
 const CODE_BLOCK_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="pre"]`;
 const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="code"]`;
+const IMAGE_FRAME_SELECTOR = `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
 
 const turndown = new TurndownService({
   bulletListMarker: "-",
@@ -54,9 +57,7 @@ turndown.addRule("compactListItem", {
     if (parent?.nodeName !== "OL") {
       return `${options.bulletListMarker} ${item}\n`;
     }
-    const start = Number(parent.getAttribute("start") ?? 1);
-    const index = Array.from(parent.children).indexOf(node);
-    return `${start + index}. ${item}\n`;
+    return `${node.getAttribute("value")}. ${item}\n`;
   },
 });
 turndown.addRule("declaredMarkdownSource", {
@@ -73,9 +74,9 @@ export function createAssistantSelectionClipboardContent(
     return null;
   }
 
-  const range = selection.getRangeAt(0);
-  const parts = selectedMessageParts(range);
-  if (!parts) {
+  const range = startAfterImageFrame(selection.getRangeAt(0));
+  const parts = selectedMessageParts(range)?.filter((part) => selectsContent(part.range));
+  if (!parts?.length) {
     return null;
   }
 
@@ -101,6 +102,33 @@ export function createAssistantSelectionClipboardContent(
 }
 
 /**
+ * A drag that starts in the gap below an image anchors at the start of the image's
+ * rendered internals, ahead of the hidden `img`, while only the text after it is
+ * highlighted. Pressing on the image itself opens it instead of starting a selection,
+ * so a selection that starts inside an image, before any of its text, and ends past it
+ * starts after the image. A failed image shows its error as text, and a selection
+ * starting in that text keeps the image.
+ */
+function startAfterImageFrame(range: Range): Range {
+  const start =
+    range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
+  const frame = start?.closest(IMAGE_FRAME_SELECTOR);
+  if (!frame || frame.contains(range.endContainer)) {
+    return range;
+  }
+  const insideFrame = range.cloneRange();
+  insideFrame.setEnd(frame, frame.childNodes.length);
+  if (insideFrame.toString()) {
+    return range;
+  }
+  const afterFrame = range.cloneRange();
+  afterFrame.setStartAfter(frame);
+  return afterFrame;
+}
+
+/**
  * Partly-selected code copies as the code itself, never through Turndown.
  *
  * `removeUnselectedSemantics` strips the `pre`/`code` tags from a partial selection,
@@ -110,10 +138,12 @@ export function createAssistantSelectionClipboardContent(
  *
  * A selection contained inside code always copies as code, even when it contains every
  * character. A selection that crosses the code boundary stays on the Markdown path so
- * a complete block retains its fence.
+ * a complete block retains its fence. Crossing means selecting content outside the code:
+ * a drag that starts or ends in the gap beside a block anchors at the edge of the
+ * neighbouring block, which selects nothing there.
  */
 function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
-  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  const region = selectedCodeRegion(range, message);
   if (!region) {
     return null;
   }
@@ -135,6 +165,18 @@ function createPartialCodeContent(range: Range, message: Element): MarkdownClipb
     language: fence?.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE),
     block,
   });
+}
+
+function selectedCodeRegion(range: Range, message: Element): Element | null {
+  const edgeRegions = [range.startContainer, range.endContainer].map((node) =>
+    closestCodeRegion(node, message),
+  );
+  return (
+    edgeRegions.find(
+      // Measure against the whole block, so its own hover Copy button is not outside it.
+      (edge) => edge && selectsNothingOutside(range, edge.closest(CODE_BLOCK_SELECTOR) ?? edge),
+    ) ?? null
+  );
 }
 
 function closestCodeRegion(node: Node, message: Element): Element | null {
@@ -288,7 +330,8 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
     return false;
   }
   const tag = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-  if (tag === "p" || isTableStructure(tag)) {
+  // An image has no part to select, so touching it selects all of it.
+  if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
   }
   const isSelectableSemantic = tag !== null && tag !== "li" && tag !== "ol" && tag !== "ul";
@@ -391,6 +434,31 @@ function hasSelectedAllContents(range: Range, element: Element, includeIgnored =
   return true;
 }
 
+function selectsContent(range: Range): boolean {
+  return hasMarkdownContent(range.cloneContents(), true);
+}
+
+function selectsNothingOutside(range: Range, element: Element): boolean {
+  const contents = document.createRange();
+  contents.selectNodeContents(element);
+
+  if (range.compareBoundaryPoints(Range.START_TO_START, contents) < 0) {
+    const before = range.cloneRange();
+    before.setEnd(contents.startContainer, contents.startOffset);
+    if (selectsContent(before)) {
+      return false;
+    }
+  }
+  if (range.compareBoundaryPoints(Range.END_TO_END, contents) > 0) {
+    const after = range.cloneRange();
+    after.setStart(contents.endContainer, contents.endOffset);
+    if (selectsContent(after)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean): boolean {
   if (!includeIgnored) {
     for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
@@ -400,10 +468,10 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   if (fragment.textContent) {
     return true;
   }
-  const visibleVoidSelector = [
-    ...["br", "hr"].map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`),
-    `[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`,
-  ].join(",");
+  const visibleVoidSelector = ["br", "hr", "img"]
+    .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
+    .concat("img", `[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`)
+    .join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }
 
@@ -496,14 +564,19 @@ function restoreMarkdownElements(container: HTMLElement): void {
       continue;
     }
     const semanticElement = document.createElement(tagName);
-    if (tagName !== "br") {
+    if (tagName !== "br" && tagName !== "img") {
       semanticElement.append(...element.childNodes);
+    }
+    if (tagName === "img") {
+      semanticElement.setAttribute("src", element.getAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE) ?? "");
+      semanticElement.setAttribute("alt", element.getAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE) ?? "");
     }
     if (tagName === "ol") {
       const start = element.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE);
       if (start) {
         semanticElement.setAttribute("start", start);
       }
+      numberOrderedListItems(semanticElement, Number(start ?? 1));
     }
     if (tagName === "pre") {
       const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
@@ -530,16 +603,22 @@ function restoreMarkdownElements(container: HTMLElement): void {
     element.replaceWith(...element.childNodes);
   }
 
-  // A `div`/`span` carrying MARKDOWN_COPY_SOURCE_ATTRIBUTE (e.g. MarkdownSource, wrapping a
-  // rendered formula's non-text SVG) has no text node of its own. That makes it "blank" to
-  // Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
-  // strips the space that follows it, and its rule dispatch short-circuits straight to the
-  // blank-node replacement, before ever consulting the "declaredMarkdownSource" rule registered
-  // above. A fixed non-whitespace sentinel gives Turndown ordinary content so it preserves
-  // surrounding whitespace and reaches the addRule. The rule returns the attribute, not this
-  // text — using `source` as bait would let Turndown treat the source's own flanking spaces as
-  // extra padding. `container` is a clone of the selection (built in `cloneMarkdownSelection`),
-  // so mutating it here is as safe as every other step in this function already assumes.
+  prepareTurndownSentinels(container);
+}
+
+/**
+ * A `div`/`span` carrying MARKDOWN_COPY_SOURCE_ATTRIBUTE (e.g. MarkdownSource, wrapping a
+ * rendered formula's non-text SVG) has no text node of its own. That makes it "blank" to
+ * Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
+ * strips the space that follows it, and its rule dispatch short-circuits straight to the
+ * blank-node replacement, before ever consulting the "declaredMarkdownSource" rule registered
+ * above. A fixed non-whitespace sentinel gives Turndown ordinary content so it preserves
+ * surrounding whitespace and reaches the addRule. The rule returns the attribute, not this
+ * text — using `source` as bait would let Turndown treat the source's own flanking spaces as
+ * extra padding. `container` is a clone of the selection (built in `cloneMarkdownSelection`),
+ * so mutating it here is as safe as every other step in this pipeline already assumes.
+ */
+function prepareTurndownSentinels(container: HTMLElement): void {
   const markdownSourceTurndownSentinel = "x";
   for (const element of container.querySelectorAll(`[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`)) {
     element.textContent = markdownSourceTurndownSentinel;
@@ -555,6 +634,20 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+}
+
+/**
+ * Each item carries its number before Turndown re-parses the HTML. Until then every
+ * child of the list is one item, including a partly selected item demoted to a `p`.
+ * The parser splits a `p` that holds a code block into several siblings, so counting
+ * siblings afterwards numbers the next item too high.
+ */
+function numberOrderedListItems(list: Element, start: number): void {
+  Array.from(list.children).forEach((child, index) => {
+    if (child.tagName === "LI") {
+      child.setAttribute("value", String(start + index));
+    }
+  });
 }
 
 function unwrapIncompleteTables(container: HTMLElement): void {
