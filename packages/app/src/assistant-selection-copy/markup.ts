@@ -9,6 +9,8 @@ export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
 export const MARKDOWN_COPY_SOURCE_ATTRIBUTE = "data-paseo-markdown-source";
 /** react-native-web `dataSet` key that renders `MARKDOWN_COPY_SOURCE_ATTRIBUTE`. */
 export const MARKDOWN_COPY_SOURCE_DATASET_KEY = "paseoMarkdownSource";
+export const MARKDOWN_COPY_SRC_ATTRIBUTE = "data-paseo-markdown-src";
+export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";
 
 /**
  * Trailing line breaks, with any indentation that followed the last one.
@@ -64,6 +66,18 @@ export function markdownCopyCodeBlockDataSet(language: string | null | undefined
   return {
     ...markdownCopyDataSet.pre,
     ...(fenceLanguage ? { paseoMarkdownLanguage: fenceLanguage } : {}),
+  } as const;
+}
+
+/**
+ * An image copies as the Markdown it came from. The rendered `img` points at a preview
+ * URL for data and workspace images, and carries no alt text of its own.
+ */
+export function markdownCopyImageDataSet(source: string, alt: string | undefined) {
+  return {
+    paseoMarkdownTag: "img",
+    paseoMarkdownSrc: source,
+    ...(alt ? { paseoMarkdownAlt: alt } : {}),
   } as const;
 }
 
