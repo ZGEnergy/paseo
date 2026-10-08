@@ -90,6 +90,21 @@ test("forbids governance and workflow paths in feature mode", () => {
   );
 });
 
+test("fork CI and Docker workflows require the exact governance exception", () => {
+  const paths = [".github/workflows/fork-ci.yml", ".github/workflows/fork-docker.yml"];
+  assert.deepEqual(validateChangedPaths(paths, "downstream-governance"), paths);
+  for (const path of paths) {
+    assert.throws(
+      () => validateChangedPaths([path], "downstream-feature"),
+      /does not allow governance or workflow path/,
+    );
+    assert.throws(
+      () => validateChangedPaths([`${path}.bak`], "downstream-governance"),
+      /does not allow/,
+    );
+  }
+});
+
 test("governance evidence does not require review approval", () => {
   const evidence = exceptionEvidence("fork/project", 7, "downstream-governance", undefined, {
     currentHead,
