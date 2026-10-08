@@ -1,0 +1,67 @@
+name: Fork CI
+
+# Keep a fork-owned entry point: main mirrors upstream workflow files unchanged.
+on:
+  push:
+    branches: [internal/main]
+  pull_request:
+    branches: [internal/main]
+  merge_group:
+    branches: [internal/main]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  fork-checks:
+    if: ${{ github.repository == 'ZGEnergy/paseo' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Validate fork governance and release contracts
+        run: node --test scripts/daemon-launch-contract.test.mjs scripts/check-upstream-provenance.test.mjs scripts/check-upstream-port.test.mjs scripts/sync-fdroid-changelogs.test.mjs scripts/upload-release-assets.test.mjs
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build workspace declarations
+        run: npm run build:server
+
+      - name: Typecheck all packages
+        run: npm run typecheck
+
+      - name: Verify built-in plugin distribution
+        run: node --test scripts/builtin-plugins-dist.test.mjs
+
+      - name: Test fork OMP provider
+        run: >-
+          npx vitest run
+          --config packages/server/vitest.config.ts
+          packages/server/src/server/agent/providers/omp
+          --exclude '**/*.real.e2e.test.ts'
+          --exclude '**/*.diagnostic.test.ts'
+          --maxWorkers=1
+          --bail=1

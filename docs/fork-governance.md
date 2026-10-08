@@ -50,6 +50,8 @@ A fork-only governance pull request may select the narrow exception only with th
 - `scripts/ci-workflow.test.mjs`
 - `docs/fork-governance.md`
 - `.github/workflows/ci.yml`
+- `.github/workflows/fork-ci.yml`
+- `.github/workflows/fork-docker.yml`
 - `.github/workflows/upstream-sync.yml`
 - `.github/workflows/upstream-import-merge.yml`
 - `.github/workflows/upstream-provenance.yml`
@@ -68,7 +70,17 @@ Internal teammates run `/ship` locally for a pull request that targets `internal
 
 ## CI and permissions
 
-Required checks are the repository CI workflow and the provenance check for changes targeting `internal/main`. CI runs on pushes to both `main` and `internal/main`; merging into `internal/main` therefore creates a fresh validation run for the exact internal release source. Governance workflows use narrow GitHub token permissions. The sync GitHub App must be installed on this repository with **Contents: write**, **Issues: write**, **Pull requests: write**, and **Workflows: write** repository permissions; Issues write is required only to create or update the single actionable divergence incident, and Workflows write is required because mirrored `main` can include workflow file changes. The workflow stores only `ZGE_PASEO_SYNC_APP_ID` and `ZGE_PASEO_SYNC_APP_PRIVATE_KEY` as secrets, mints a repository-scoped installation token at the start of each run, and uses that short-lived token for sync pushes, pull-request automation, and divergence incident updates. No persistent installation token is stored.
+Require `fork-checks` from **Fork CI** and `reconcile` from **Upstream provenance** for pull requests targeting `internal/main`. Fork CI uses one Ubuntu runner for formatting, lint, workspace typechecking, governance/release contracts, and OMP provider unit tests. It runs on internal pull requests, merge queues, `internal/main` pushes, and manual dispatch. The upstream platform matrix, browser shards, and full package suites do not run in the fork.
+
+Keep these inherited workflows **disabled in the fork's GitHub Actions settings**: `ci.yml`, `desktop-packages.yml`, `docker.yml`, and `nix.yml`. `main` mirrors upstream, including upstream workflow triggers; edits on `internal/main` cannot stop those mirror-push runs. Repository-level disabling survives mirror updates. Fork CI has its own `fork-ci.yml` entry point, so it remains active while inherited CI is disabled. Do not remove the inherited workflow files to enforce this policy; the next upstream sync can restore them.
+
+**Fork Docker** (`fork-docker.yml`) preserves `v*` tag builds and manual builds without building on branch pushes. Its tag entry point follows the **Release Notes Sync** workflow's requested event, so tags pointing at mirrored `main` still reach the fork-owned workflow on the default branch. Branch runs of Release Notes Sync do not build images. Docker checks out the triggering tag's commit and pins later jobs to that source SHA.
+
+Fork-only Docker retries use `gh workflow run fork-docker.yml --repo ZGEnergy/paseo --ref internal/main`, with the version and publish inputs from [the Docker guide](docker.md#building-locally). Use `-f source_ref=main` or another ref to build a different source without moving the fork-owned workflow off `internal/main`. Images publish under `ghcr.io/zgenergy/paseo`, not the upstream namespace. Other release and governance workflows keep their existing triggers.
+
+When setting up another fork installation, land the new governance allowlist entries in a separate pull request before adding the fork-owned workflows. Provenance executes the trusted base-branch checker, so a pull request cannot authorize its own new workflow paths. Then land the fork-owned workflows, require only `fork-checks` and `reconcile` on `internal/main`, and disable the inherited workflows. Removing the old required job names prevents imports from waiting forever for disabled checks. **Upstream import merge** waits specifically for Fork CI, not upstream CI.
+
+Governance workflows use narrow GitHub token permissions. The sync GitHub App must be installed on this repository with **Contents: write**, **Issues: write**, **Pull requests: write**, and **Workflows: write** repository permissions; Issues write is required only to create or update the single actionable divergence incident, and Workflows write is required because mirrored `main` can include workflow file changes. The workflow stores only `ZGE_PASEO_SYNC_APP_ID` and `ZGE_PASEO_SYNC_APP_PRIVATE_KEY` as secrets, mints a repository-scoped installation token at the start of each run, and uses that short-lived token for sync pushes, pull-request automation, and divergence incident updates. No persistent installation token is stored.
 
 ## Release and relay isolation
 
