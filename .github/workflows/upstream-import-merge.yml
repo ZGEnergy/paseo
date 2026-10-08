@@ -87,7 +87,7 @@ jobs:
           )"
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for CI checks
+      - name: Wait for Fork CI checks
         if: steps.classify.outputs.kind != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,16 +106,16 @@ jobs:
             fi
             result="$(node --input-type=module - "$checks" <<'NODE'
           const checks = JSON.parse(process.argv[2]);
-          const ciChecks = checks.filter((candidate) => candidate.workflow === "CI");
+          const ciChecks = checks.filter((candidate) => candidate.workflow === "Fork CI");
           const failed = [];
           const pending = [];
           const terminalSuccess = new Set(["SUCCESS", "SKIPPED"]);
           const waiting = new Set(["PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS"]);
 
-          if (ciChecks.length === 0) pending.push("CI");
+          if (ciChecks.length === 0) pending.push("Fork CI");
           for (const check of ciChecks) {
             const state = typeof check.state === "string" ? check.state.toUpperCase() : "";
-            const label = `CI / ${check.name ?? "<unnamed>"}`;
+            const label = `Fork CI / ${check.name ?? "<unnamed>"}`;
             if (waiting.has(state)) {
               pending.push(`${label}: ${state}`);
             } else if (!terminalSuccess.has(state)) {
