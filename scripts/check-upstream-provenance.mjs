@@ -44,6 +44,8 @@ const DOWNSTREAM_GOVERNANCE_PATHS = Object.freeze([
   "docs/fork-governance.md",
   "CLAUDE.md",
   ".github/workflows/ci.yml",
+  ".github/workflows/fork-ci.yml",
+  ".github/workflows/fork-docker.yml",
   ".github/workflows/upstream-sync.yml",
   ".github/workflows/upstream-import-merge.yml",
   ".github/workflows/upstream-provenance.yml",
