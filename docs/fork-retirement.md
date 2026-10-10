@@ -2,7 +2,7 @@
 
 ## Active capability count
 
-**2 waiting.** The 2026-10-10 run retired the Claude background/autonomous subagent capability (`upstream-candidate` → retired): the 2026-10-10 auto sync ([ZGEnergy/paseo#193](https://github.com/ZGEnergy/paseo/pull/193), head `main` `e81d5d02b1`, CONFLICTING on 5 paths) is resolved by the 2026-10-10 downstream sync ([ZGEnergy/paseo#196](https://github.com/ZGEnergy/paseo/pull/196), head `d4c4cb5fa4`, two-parent merge: first parent `fa6c8138b8` = prior `internal/main` tip, second parent `e81d5d02b1` = live `main`), which adopts upstream [getpaseo/paseo#6295](https://github.com/getpaseo/paseo/pull/6295) wholesale and removes the fork's #11/#42 admission/settlement machinery (see retired history). The plugin assistant-markdown surface and the OMP task/subagent lifecycle capability remain `waiting` — the window carried no upstream replacement for either.
+**2 waiting; 1 hard blocker.** Only the plugin assistant-markdown surface blocks fork retirement. OMP task and subagent lifecycle correctness is a soft blocker (owner decision, 2026-10-10): track it, but retirement does not wait for it. The 2026-10-10 run retired the Claude background/autonomous subagent capability (`upstream-candidate` → retired): the 2026-10-10 auto sync ([ZGEnergy/paseo#193](https://github.com/ZGEnergy/paseo/pull/193), head `main` `e81d5d02b1`, CONFLICTING on 5 paths) is resolved by the 2026-10-10 downstream sync ([ZGEnergy/paseo#196](https://github.com/ZGEnergy/paseo/pull/196), head `d4c4cb5fa4`, two-parent merge: first parent `fa6c8138b8` = prior `internal/main` tip, second parent `e81d5d02b1` = live `main`), which adopts upstream [getpaseo/paseo#6295](https://github.com/getpaseo/paseo/pull/6295) wholesale and removes the fork's #11/#42 admission/settlement machinery (see retired history). The plugin assistant-markdown surface and the OMP task/subagent lifecycle capability remain `waiting` — the window carried no upstream replacement for either.
 
 Last reviewed: 2026-10-10
 
@@ -15,6 +15,8 @@ Evidence baseline:
 ## Plugin assistant-markdown surface
 
 **Status:** `waiting`
+
+**Retirement blocker:** hard.
 
 Last reviewed: 2026-10-10
 
@@ -47,6 +49,8 @@ Upstream evidence:
 ## OMP task and subagent lifecycle correctness
 
 **Status:** `waiting`
+
+**Retirement blocker:** soft (owner decision, 2026-10-10). Retirement does not wait for upstream to provide this behavior.
 
 Last reviewed: 2026-10-10
 
