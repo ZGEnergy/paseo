@@ -5,13 +5,13 @@ phone or browser, and builds the desktop app on their own Mac.
 
 ## Where each piece comes from
 
-| Piece             | Source                                   |
-| ----------------- | ---------------------------------------- |
-| Daemon + CLI      | Built from this fork on your dev box     |
-| Browser web UI    | Served by that daemon                    |
-| iOS / Android app | Upstream App Store / Play build          |
-| Desktop app       | Built from this fork on your own machine |
-| Relay             | Upstream default endpoint, unchanged     |
+| Piece             | Source                                      |
+| ----------------- | ------------------------------------------- |
+| Daemon + CLI      | Built from this fork on your dev box        |
+| Browser web UI    | Served by that daemon                       |
+| iOS / Android app | Upstream App Store / Play build             |
+| Desktop app       | Built from this fork on your own machine    |
+| Relay             | ZGE Cloudflare Worker, `relay.zgenergy.app` |
 
 This fork publishes no releases, so `paseo.sh/download` and `npm i -g @getpaseo/cli`
 only ever give you upstream code. Install neither on the box that runs your daemon:
@@ -52,6 +52,19 @@ it over Tailscale or another VPN instead, set `--relay false`, bind to the tailn
 address or `0.0.0.0:6767` with `--listen`, and pass the hostnames clients will use to
 `--hostnames`. That flag is a Host-header allowlist against DNS rebinding, not a bind
 address, so an allowlist alone leaves a loopback daemon unreachable.
+
+Use the ZGE relay instead of upstream's `relay.paseo.sh`: set `daemon.relay` in
+`$PASEO_HOME/config.json` as below, restart the daemon, and re-pair your clients. The
+pairing QR carries the endpoint, so the upstream apps follow it.
+
+```json
+"relay": { "enabled": true, "endpoint": "relay.zgenergy.app:443", "useTls": true }
+```
+
+The relay is the upstream Worker (`packages/relay`) deployed from
+`packages/relay/wrangler.zge.toml`. Redeploy with
+`cd packages/relay && npx wrangler deploy -c wrangler.zge.toml`; the token needs
+Workers Scripts and Workers Routes edit on the ZGE account.
 
 Put `${XDG_BIN_HOME:-~/.local/bin}` first on `PATH` so the launcher this installs is
 the `paseo` you get.
